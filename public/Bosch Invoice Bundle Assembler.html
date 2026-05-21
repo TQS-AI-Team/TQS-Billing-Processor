@@ -1747,7 +1747,7 @@ function buildSummaryRows() {
       allRows.push({
         desc, invNum: '', agreementNum: '',
         type: 'HST', schedHrs: 0,
-        qty: '', rate: null, subtotal: hst.total, grandTotal: ''
+        qty: 0, rate: hst.total, subtotal: hst.total, grandTotal: ''
       });
     }
   });
@@ -2056,7 +2056,7 @@ async function addSummaryPages(mergedPdf) {
   const fontBold = await mergedPdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
  
   for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-    const page = mergedPdf.addPage([792, 612]); // Landscape like the Sage invoices
+    let page = mergedPdf.addPage([792, 612]); // Landscape like the Sage invoices
     const { width, height } = page.getSize();
     const rows = pages[pIdx];
  
@@ -2129,12 +2129,21 @@ async function addSummaryPages(mergedPdf) {
       drawTableHeader(page, y, font, fontBold);
       y -= 16;
  
-      // Data rows
+      // Data rows — footer goes on the original cover page regardless of overflow
+      const coverPage = page;
       rows.forEach(row => {
         y -= 14;
-        if (y < 40) return;
+        if (y < 40) {
+          page = mergedPdf.addPage([792, 612]);
+          y = 596;
+          drawTableHeader(page, y, font, fontBold);
+          y -= 16;
+          y -= 14;
+        }
         drawTableRow(page, y, row, font, fontBold);
       });
+      coverPage.drawText(`Page 1 of ${pages.length}`, { x: width - 100, y: 20, size: 8, font, color: PDFLib.rgb(0.5, 0.5, 0.5) });
+      continue;
     } else {
       // Continuation pages
       let y = height - 30;
@@ -2144,7 +2153,13 @@ async function addSummaryPages(mergedPdf) {
       y -= 16;
       rows.forEach(row => {
         y -= 14;
-        if (y < 40) return;
+        if (y < 40) {
+          page = mergedPdf.addPage([792, 612]);
+          y = 596;
+          drawTableHeader(page, y, font, fontBold);
+          y -= 16;
+          y -= 14;
+        }
         drawTableRow(page, y, row, font, fontBold);
       });
     }
