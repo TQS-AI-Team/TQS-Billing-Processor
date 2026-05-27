@@ -7,7 +7,7 @@
           {
             "type": "command",
             "if": "Bash(git commit*)",
-            "command": "git log -1 --pretty=%s | grep -q 'PROJECT_LOG' && echo '{}' || jq -n '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"You just made a git commit. You MUST now update docs/PROJECT_LOG.md: add a new row to the version table with the next version number, today date (2026-05-08), a one-line summary of what changed, and the commit SHA from the git commit output. Do this before responding to the user.\"}}'",
+            "command": "git log -1 --pretty=%s | grep -q 'PROJECT_LOG' && echo '{}' || jq -n --arg d \"$(date +%Y-%m-%d)\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":(\"You just made a git commit. You MUST now update docs/PROJECT_LOG.md: add a new row to the version table with the next version number, today date (\" + $d + \"), a one-line summary of what changed, and the commit SHA from the git commit output. Do this before responding to the user.\")}}'",
             "timeout": 5
           }
         ]
