@@ -1743,7 +1743,7 @@ function buildSummaryRows() {
     // One HST row per invoice that had HST line items
     Object.entries(hstByInvoice).forEach(([invNum, hstTotal]) => {
       allRows.push({
-        desc, invNum, agreementNum: '',
+        desc, invNum: '', agreementNum: '',
         type: 'HST Applied', schedHrs: 0,
         qty: 0, rate: hstTotal, subtotal: hstTotal, grandTotal: ''
       });
@@ -1877,6 +1877,17 @@ function buildAdditionalHoursHTML() {
 }
  
 // ===== PDF Bundle Generation =====
+
+// Reset CropBox/BleedBox to match MediaBox so pages display consistently across
+// all PDF viewers. Sage PDFs sometimes have a CropBox smaller than the MediaBox,
+// which causes some viewers to clip content at the bottom of the page.
+function normalizePage(page) {
+  try {
+    const { x, y, width, height } = page.getMediaBox();
+    page.setCropBox(x, y, width, height);
+  } catch (e) { /* ignore — page geometry already valid */ }
+}
+
 async function generateBundle() {
   const genProg = document.getElementById('generateProgress');
   const genStatus = document.getElementById('generateStatus');
@@ -1938,6 +1949,7 @@ async function generateBundle() {
           if (srcDoc) {
             for (const pageIdx of step.inv.pages) {
               const [copiedPage] = await mergedPdf.copyPages(srcDoc, [pageIdx - 1]);
+              normalizePage(copiedPage);
               mergedPdf.addPage(copiedPage);
             }
           }
@@ -1946,6 +1958,7 @@ async function generateBundle() {
           if (srcDoc) {
             for (const pageIdx of step.inv.pages) {
               const [copiedPage] = await mergedPdf.copyPages(srcDoc, [pageIdx - 1]);
+              normalizePage(copiedPage);
               mergedPdf.addPage(copiedPage);
             }
           }
@@ -2022,7 +2035,7 @@ async function addApprovalToBundle(mergedPdf, approval) {
     const approvalBytes = await file.arrayBuffer();
     const approvalDoc = await PDFLib.PDFDocument.load(approvalBytes);
     const approvalPages = await mergedPdf.copyPages(approvalDoc, approvalDoc.getPageIndices());
-    approvalPages.forEach(p => mergedPdf.addPage(p));
+    approvalPages.forEach(p => { normalizePage(p); mergedPdf.addPage(p); });
   }
 }
  
