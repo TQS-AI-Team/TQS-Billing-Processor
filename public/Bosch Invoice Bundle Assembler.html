@@ -1648,15 +1648,20 @@ function buildSummaryRows() {
     const types = {
       'Standard hours': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
       'Additional hours': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
-      'Miscellaneous': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
-      'HST': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
+      'Miscellaneous': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
     };
+    // HST tracked per invoice so each gets its own summary row
+    const hstByInvoice = {}; // invoiceNumber → total HST amount
  
     // Sum scheduled hours — skip agreements that expired on the period start date
     // (replaced agreements whose expireTime = first day of period)
     const periodStart = APP.headerValues.billingPeriodStart || '';
     const agrDetails = [];
+    // Collect otRate from ANY agreement at this location (expired or not — it's a location-level property)
     let locationOtRate = null;
+    for (const [agrNum, ag] of Object.entries(agreements)) {
+      if (!locationOtRate && ag.otRate) locationOtRate = parseFloat(ag.otRate);
+    }
     for (const [agrNum, ag] of Object.entries(agreements)) {
       const expireDate = ag.expireTime ? ag.expireTime.substring(0, 10) : null;
       if (expireDate && expireDate === periodStart) continue;
@@ -1664,7 +1669,6 @@ function buildSummaryRows() {
       types['Standard hours'].schedHrs += hrs;
       types['Standard hours'].agrNums.add('F' + agrNum);
       agrDetails.push(`F${agrNum}=${hrs}`);
-      if (!locationOtRate && ag.otRate) locationOtRate = parseFloat(ag.otRate);
     }
     console.log(`[schedHrs] ${locName}: ${agrDetails.join(' + ')} = ${types['Standard hours'].schedHrs}`);
  
@@ -1682,18 +1686,15 @@ function buildSummaryRows() {
         // Classify each line item
         lineItems.forEach(li => {
           const sType = (li.serviceType || '').toLowerCase();
-          let targetType;
-          if (sType.includes('additional')) {
-            targetType = 'Additional hours';
-          } else if (sType.includes('hst') || sType.includes('tax')) {
-            targetType = 'HST';
+          if (sType.includes('hst') || sType.includes('tax')) {
+            const key = inv.invoiceNumber || '(unknown)';
+            hstByInvoice[key] = (hstByInvoice[key] || 0) + (li.lineSubtotal || li.amount || 0);
           } else {
-            // Standard hours, Weekend Production, Contracted Hours, Other → all go to Standard
-            targetType = 'Standard hours';
+            const targetType = sType.includes('additional') ? 'Additional hours' : 'Standard hours';
+            types[targetType].qty += (li.qty || 0);
+            types[targetType].total += (li.lineSubtotal || li.amount || 0);
+            if (li.rate && !types[targetType].rate) types[targetType].rate = li.rate;
           }
-          types[targetType].qty += (li.qty || 0);
-          types[targetType].total += (li.lineSubtotal || li.amount || 0);
-          if (li.rate && !types[targetType].rate) types[targetType].rate = li.rate;
         });
  
         if (inv.invoiceNumber) {
@@ -1738,15 +1739,14 @@ function buildSummaryRows() {
       qty: '', rate: null, subtotal: misc.total, grandTotal: ''
     });
  
-    // HST row — only if there's HST data
-    const hst = types['HST'];
-    if (hst.total > 0) {
+    // One HST row per invoice that had HST line items
+    Object.entries(hstByInvoice).forEach(([invNum, hstTotal]) => {
       allRows.push({
-        desc, invNum: '', agreementNum: '',
-        type: 'HST', schedHrs: 0,
-        qty: '', rate: null, subtotal: hst.total, grandTotal: ''
+        desc, invNum, agreementNum: '',
+        type: 'HST Applied', schedHrs: 0,
+        qty: 0, rate: hstTotal, subtotal: hstTotal, grandTotal: ''
       });
-    }
+    });
   });
  
   return allRows;
@@ -2053,7 +2053,7 @@ async function addSummaryPages(mergedPdf) {
   const fontBold = await mergedPdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
  
   for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-    const page = mergedPdf.addPage([792, 612]); // Landscape like the Sage invoices
+    let page = mergedPdf.addPage([792, 612]); // Landscape like the Sage invoices
     const { width, height } = page.getSize();
     const rows = pages[pIdx];
  
@@ -2126,12 +2126,21 @@ async function addSummaryPages(mergedPdf) {
       drawTableHeader(page, y, font, fontBold);
       y -= 16;
  
-      // Data rows
+      // Data rows — footer goes on the original cover page regardless of overflow
+      const coverPage = page;
       rows.forEach(row => {
         y -= 14;
-        if (y < 40) return;
+        if (y < 40) {
+          page = mergedPdf.addPage([792, 612]);
+          y = 596;
+          drawTableHeader(page, y, font, fontBold);
+          y -= 16;
+          y -= 14;
+        }
         drawTableRow(page, y, row, font, fontBold);
       });
+      coverPage.drawText(`Page 1 of ${pages.length}`, { x: width - 100, y: 20, size: 8, font, color: PDFLib.rgb(0.5, 0.5, 0.5) });
+      continue;
     } else {
       // Continuation pages
       let y = height - 30;
@@ -2141,7 +2150,13 @@ async function addSummaryPages(mergedPdf) {
       y -= 16;
       rows.forEach(row => {
         y -= 14;
-        if (y < 40) return;
+        if (y < 40) {
+          page = mergedPdf.addPage([792, 612]);
+          y = 596;
+          drawTableHeader(page, y, font, fontBold);
+          y -= 16;
+          y -= 14;
+        }
         drawTableRow(page, y, row, font, fontBold);
       });
     }

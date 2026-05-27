@@ -14,6 +14,10 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.4.8 | 2026-05-27 | HST rows now appear per-invoice (one row per invoice with HST, showing invoice number) instead of one aggregated row per location. Type label changed to "HST Applied". | `3b99b6e` |
+| v2.4.7 | 2026-05-21 | Fix PDF summary pagination — rows at bottom of page now overflow to a new page instead of being silently dropped. | `1df74f8` |
+| v2.4.6 | 2026-05-21 | Fix HST row in summary — Unit Price and Subtotal both show HST total; Scheduled Hours and Hours Worked show 0. | `1df74f8` |
+| v2.4.5 | 2026-05-12 | Fix otRate lookup — collect from all agreements at location (including expired ones) since it is a location-level property, not period-specific. | `95df6de` |
 | v2.4.4 | 2026-05-12 | Add `otRate` field name diagnostic to parse log (first agreement's field list + per-agreement otRate value) to identify correct N8N field name. | `a963680` |
 | v2.4.3 | 2026-05-08 | Additional hours rate now uses `otRate` from agreement data; falls back to OCR rate then std.rate × 1.5. | `cae2745` |
 | v2.4.2 | 2026-05-08 | Filter agreements expiring on period start date from summary — replaced agreements hidden; other zero-hour agreements still shown. | `aafe040` |
