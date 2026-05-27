@@ -911,15 +911,23 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.4.9';
+const APP_VERSION='2.5.1';
 const CHANGELOG=[
+  {
+    version:'2.5.1',
+    date:'2026-05-27',
+    changes:[
+      'Fix <b>PDF bundle page cutoffs</b> — Sage PDFs carry a CropBox smaller than the MediaBox; some viewers clipped content at the bottom. All copied pages now have CropBox reset to match MediaBox for consistent rendering.',
+      '<b>HST Applied</b> summary rows no longer show the invoice number in the Invoice # column.',
+    ]
+  },
   {
     version:'2.4.9',
     date:'2026-05-27',
     changes:[
       'Fix <b>HST detection</b> — summary rows now check the line item <code>description</code> field for "HST" text in addition to <code>serviceType</code>, so invoices already extracted as "Other" correctly surface HST rows without re-running OCR.',
       'Updated OCR prompt to classify HST/tax line items as <code>serviceType: "HST Applied"</code> for future extractions.',
-      '<b>HST rows</b> in the summary now appear one-per-invoice (with the invoice number shown) instead of one aggregated row per location.',
+      '<b>HST rows</b> in the summary now appear one-per-invoice instead of one aggregated row per location.',
       'Fix <b>PDF summary pagination</b> — rows at the bottom of a page now overflow to a new page instead of being silently dropped.',
     ]
   },
