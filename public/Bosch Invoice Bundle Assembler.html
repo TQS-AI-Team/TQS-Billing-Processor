@@ -1648,9 +1648,10 @@ function buildSummaryRows() {
     const types = {
       'Standard hours': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
       'Additional hours': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
-      'Miscellaneous': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() },
-      'HST': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
+      'Miscellaneous': { schedHrs: 0, qty: 0, total: 0, rate: null, invNums: new Set(), agrNums: new Set() }
     };
+    // HST tracked per invoice so each gets its own summary row
+    const hstByInvoice = {}; // invoiceNumber → total HST amount
  
     // Sum scheduled hours — skip agreements that expired on the period start date
     // (replaced agreements whose expireTime = first day of period)
@@ -1685,18 +1686,15 @@ function buildSummaryRows() {
         // Classify each line item
         lineItems.forEach(li => {
           const sType = (li.serviceType || '').toLowerCase();
-          let targetType;
-          if (sType.includes('additional')) {
-            targetType = 'Additional hours';
-          } else if (sType.includes('hst') || sType.includes('tax')) {
-            targetType = 'HST';
+          if (sType.includes('hst') || sType.includes('tax')) {
+            const key = inv.invoiceNumber || '(unknown)';
+            hstByInvoice[key] = (hstByInvoice[key] || 0) + (li.lineSubtotal || li.amount || 0);
           } else {
-            // Standard hours, Weekend Production, Contracted Hours, Other → all go to Standard
-            targetType = 'Standard hours';
+            const targetType = sType.includes('additional') ? 'Additional hours' : 'Standard hours';
+            types[targetType].qty += (li.qty || 0);
+            types[targetType].total += (li.lineSubtotal || li.amount || 0);
+            if (li.rate && !types[targetType].rate) types[targetType].rate = li.rate;
           }
-          types[targetType].qty += (li.qty || 0);
-          types[targetType].total += (li.lineSubtotal || li.amount || 0);
-          if (li.rate && !types[targetType].rate) types[targetType].rate = li.rate;
         });
  
         if (inv.invoiceNumber) {
@@ -1741,15 +1739,14 @@ function buildSummaryRows() {
       qty: '', rate: null, subtotal: misc.total, grandTotal: ''
     });
  
-    // HST row — only if there's HST data
-    const hst = types['HST'];
-    if (hst.total > 0) {
+    // One HST row per invoice that had HST line items
+    Object.entries(hstByInvoice).forEach(([invNum, hstTotal]) => {
       allRows.push({
-        desc, invNum: '', agreementNum: '',
-        type: 'HST', schedHrs: 0,
-        qty: 0, rate: hst.total, subtotal: hst.total, grandTotal: ''
+        desc, invNum, agreementNum: '',
+        type: 'HST Applied', schedHrs: 0,
+        qty: 0, rate: hstTotal, subtotal: hstTotal, grandTotal: ''
       });
-    }
+    });
   });
  
   return allRows;
