@@ -963,7 +963,7 @@ Extract and return JSON with these exact fields:
       "date": "string - the date or week description",
       "description": "string - the full description text (e.g. On-Site Liaison Representative - Contracted Hours)",
       "referenceNumber": "string or null - the Reference number if present (e.g. F255954)",
-      "serviceType": "Contracted Hours" | "Weekend Production" | "Additional Hours" | "Other",
+      "serviceType": "Contracted Hours" | "Weekend Production" | "Additional Hours" | "HST Applied" | "Other",
       "serviceLocation": "string - this line item's service location",
       "po": "string - the PO number",
       "rate": number,
@@ -979,7 +979,7 @@ Extract and return JSON with these exact fields:
 }
 Notes:
 - subtotal, paymentsCreditsApplied, and totalDue only appear on some pages (typically the last page of each invoice). Set to null if not present.
-- For serviceType, categorize based on the Description text: "Contracted Hours" if it says contracted, "Weekend Production" if it mentions weekend production, "Additional Hours" if it mentions additional, otherwise "Other".
+- For serviceType, categorize based on the Description text: "Contracted Hours" if it says contracted, "Weekend Production" if it mentions weekend production, "Additional Hours" if it mentions additional, "HST Applied" if it mentions HST or tax (e.g. "HST Applied"), otherwise "Other".
 - If the page is blank or contains no invoice data, return {"blank": true}.
 Return ONLY the JSON object, no other text.`;
  
@@ -1686,7 +1686,8 @@ function buildSummaryRows() {
         // Classify each line item
         lineItems.forEach(li => {
           const sType = (li.serviceType || '').toLowerCase();
-          if (sType.includes('hst') || sType.includes('tax')) {
+          const sDesc = (li.description || '').toLowerCase();
+          if (sType.includes('hst') || sType.includes('tax') || sDesc.includes('hst') || sDesc.includes('tax')) {
             const key = inv.invoiceNumber || '(unknown)';
             hstByInvoice[key] = (hstByInvoice[key] || 0) + (li.lineSubtotal || li.amount || 0);
           } else {
