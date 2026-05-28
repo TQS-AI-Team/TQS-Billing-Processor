@@ -2055,10 +2055,12 @@ async function addSummaryPages(mergedPdf) {
     isTotal: r.isTotal, isFirstRow: r.isFirstRow, totalLabel: r.totalLabel, agreementNum: r.agreementNum
   }));
  
-  // Paginate: ~30 data rows per page
-  const ROWS_PER_PAGE = 30;
+  // Paginate: first page has less space due to header (16 rows), continuation pages fit 35
+  const ROWS_FIRST_PAGE = 16;
+  const ROWS_PER_PAGE = 35;
   const pages = [];
-  for (let i = 0; i < dataRows.length; i += ROWS_PER_PAGE) {
+  pages.push(dataRows.slice(0, ROWS_FIRST_PAGE));
+  for (let i = ROWS_FIRST_PAGE; i < dataRows.length; i += ROWS_PER_PAGE) {
     pages.push(dataRows.slice(i, i + ROWS_PER_PAGE));
   }
   if (pages.length === 0) pages.push([]);
