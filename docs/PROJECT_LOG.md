@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.5.7 | 2026-05-28 | Format header Total Amount Due with thousands separator and right-align within its box using `fmtCurrency`. | `69d04c5` |
 | v2.5.6 | 2026-05-28 | Bump `APP_VERSION` to 2.5.5 in `index.html`; add v2.5.5 and v2.5.3 changelog entries. | `757c44e` |
 | v2.5.5 | 2026-05-28 | PDF summary: group-aware pagination keeps each location's rows together (no mid-group page breaks); currency columns right-aligned with thousands separators; column headers right-aligned to match. | `c1350a3` |
 | v2.5.4 | 2026-05-28 | Bump `APP_VERSION` to 2.5.3 in `index.html`; add v2.5.3 changelog entry. | `690b2ee` |
