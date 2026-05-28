@@ -2133,7 +2133,9 @@ async function addSummaryPages(mergedPdf) {
       page.drawText(`Due Date: ${h.dueDate || ''}`, { x: 55, y: y - 16, size: 8, font, color: white });
       // Amount in a box
       page.drawRectangle({ x: 460, y: y - 20, width: 120, height: 30, borderColor: red, borderWidth: 2, color: white });
-      page.drawText(`$${totalAmount.toFixed(2)}`, { x: 470, y: y - 10, size: 12, font: fontBold });
+      const totalStr = fmtCurrency(totalAmount);
+      const totalW = fontBold.widthOfTextAtSize(totalStr, 12);
+      page.drawText(totalStr, { x: 574 - totalW, y: y - 10, size: 12, font: fontBold });
       y -= 30;
  
       // Please remit to
