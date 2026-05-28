@@ -911,8 +911,15 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.5.1';
+const APP_VERSION='2.5.3';
 const CHANGELOG=[
+  {
+    version:'2.5.3',
+    date:'2026-05-28',
+    changes:[
+      'Fix <b>PDF summary page layout</b> — first page now pre-allocates exactly 16 rows (matching available space after the invoice header); continuation pages increased from 30 to 35 rows per page.',
+    ]
+  },
   {
     version:'2.5.1',
     date:'2026-05-27',
