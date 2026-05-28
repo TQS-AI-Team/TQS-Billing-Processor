@@ -14,7 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
-| v2.5.3 | 2026-05-27 | Fix PDF summary pagination: first page now correctly allocated 16 rows (header consumes ~308 pts of the 572 pt page); continuation pages increased from 30 to 35 rows. | pending |
+| v2.5.3 | 2026-05-28 | Fix PDF summary pagination: first page now correctly allocated 16 rows (header consumes ~308 pts of the 572 pt page); continuation pages increased from 30 to 35 rows. | `7dc645a` |
 | v2.5.2 | 2026-05-27 | Bump `APP_VERSION` to 2.5.1 in `index.html`; add v2.5.1 and v2.4.9 changelog entries. | `bb8f1d5` |
 | v2.5.1 | 2026-05-27 | Remove invoice # from HST Applied summary rows; fix PDF bundle page cutoff by normalizing CropBox=MediaBox on all copied pages (Sage PDFs have a smaller CropBox that some viewers clip to). | `4a9ec73` |
 | v2.5.0 | 2026-05-27 | Bump `APP_VERSION` to 2.4.9 in `index.html` and add v2.4.x changelog entries — production UI was still showing 2.3.0. | `b10891e` |
