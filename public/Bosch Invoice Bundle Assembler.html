@@ -2055,14 +2055,32 @@ async function addSummaryPages(mergedPdf) {
     isTotal: r.isTotal, isFirstRow: r.isFirstRow, totalLabel: r.totalLabel, agreementNum: r.agreementNum
   }));
  
-  // Paginate: first page has less space due to header (16 rows), continuation pages fit 35
+  // Group consecutive rows by location (isFirstRow marks the start of each group)
+  const groups = [];
+  let curGroup = [];
+  for (const row of dataRows) {
+    if (row.isFirstRow && curGroup.length > 0) { groups.push(curGroup); curGroup = []; }
+    curGroup.push(row);
+  }
+  if (curGroup.length > 0) groups.push(curGroup);
+
+  // Assign groups to pages — keep each location group intact on one page
   const ROWS_FIRST_PAGE = 16;
   const ROWS_PER_PAGE = 35;
   const pages = [];
-  pages.push(dataRows.slice(0, ROWS_FIRST_PAGE));
-  for (let i = ROWS_FIRST_PAGE; i < dataRows.length; i += ROWS_PER_PAGE) {
-    pages.push(dataRows.slice(i, i + ROWS_PER_PAGE));
+  let curPage = [], capacity = ROWS_FIRST_PAGE;
+  for (const group of groups) {
+    if (group.length > capacity && curPage.length > 0) {
+      pages.push(curPage);
+      curPage = [...group];
+      capacity = ROWS_PER_PAGE - group.length;
+    } else {
+      curPage.push(...group);
+      capacity -= group.length;
+    }
+    if (capacity <= 0) { pages.push(curPage); curPage = []; capacity = ROWS_PER_PAGE; }
   }
+  if (curPage.length > 0) pages.push(curPage);
   if (pages.length === 0) pages.push([]);
  
   const font = await mergedPdf.embedFont(PDFLib.StandardFonts.Helvetica);
@@ -2185,32 +2203,55 @@ async function addSummaryPages(mergedPdf) {
 function drawTableHeader(page, y, font, fontBold) {
   const cols = [50, 280, 350, 430, 490, 545, 620, 710];
   const headers = ['Description', 'Invoice #', 'Type', 'Scheduled Hours', 'Hours Worked', 'Unit Price', 'Subtotal', 'Grand Total'];
-  // Header background
+  const rightAlignCols = { 5: 618, 6: 708, 7: 780 }; // right edges matching drawTableRow
+  const sz = 7;
+  const white = PDFLib.rgb(1, 1, 1);
   page.drawRectangle({ x: 48, y: y - 4, width: 720, height: 16, color: PDFLib.rgb(0.42, 0.44, 0.5) });
   headers.forEach((h, i) => {
-    page.drawText(h, { x: cols[i], y, size: 7, font: fontBold, color: PDFLib.rgb(1, 1, 1) });
+    if (rightAlignCols[i] !== undefined) {
+      const w = fontBold.widthOfTextAtSize(h, sz);
+      page.drawText(h, { x: rightAlignCols[i] - w, y, size: sz, font: fontBold, color: white });
+    } else {
+      page.drawText(h, { x: cols[i], y, size: sz, font: fontBold, color: white });
+    }
   });
 }
  
+function fmtCurrency(val) {
+  if (val == null || val === '') return '';
+  const n = Number(val);
+  if (isNaN(n)) return '';
+  const parts = n.toFixed(2).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return '$' + parts.join('.');
+}
+
 function drawTableRow(page, y, row, font, fontBold) {
   const cols = [50, 280, 350, 430, 490, 545, 620, 710];
+  // Right edges for the three currency columns
+  const R_UNIT = 618, R_SUB = 708, R_GT = 780;
   const clr = PDFLib.rgb(0, 0, 0);
- 
-  if (row.isTotal) {
-    // Legacy total rows — skip (no longer generated)
-    return;
-  }
+  const sz = 7;
+
+  if (row.isTotal) return;
+
   const f = row.isFirstRow ? fontBold : font;
+
+  const drawRight = (text, rightX, fnt) => {
+    if (!text) return;
+    const w = fnt.widthOfTextAtSize(text, sz);
+    page.drawText(text, { x: rightX - w, y, size: sz, font: fnt, color: clr });
+  };
+
   page.drawText(String(row.desc || '').substring(0, 70), { x: cols[0], y, size: 6, font: f, color: clr });
-  page.drawText(String(row.invNum || ''), { x: cols[1], y, size: 7, font: f, color: clr });
-  page.drawText(String(row.type || ''), { x: cols[2], y, size: 7, font: f, color: clr });
-  page.drawText(String(row.schedHrs !== undefined ? row.schedHrs : '0'), { x: cols[3], y, size: 7, font: f, color: clr });
-  page.drawText(String(row.qty !== undefined && row.qty !== '' ? row.qty : '0'), { x: cols[4], y, size: 7, font: f, color: clr });
-  page.drawText(row.rate ? '$ ' + row.rate.toFixed(2) : '', { x: cols[5], y, size: 7, font: f, color: clr });
-  page.drawText(row.subtotal !== '' && row.subtotal !== undefined ? '$ ' + Number(row.subtotal).toFixed(2) : '$ 0.00', { x: cols[6], y, size: 7, font: f, color: clr });
-  // Grand total on the first row (Standard hours) — bolded; always draw even if 0
+  page.drawText(String(row.invNum || ''), { x: cols[1], y, size: sz, font: f, color: clr });
+  page.drawText(String(row.type || ''), { x: cols[2], y, size: sz, font: f, color: clr });
+  page.drawText(String(row.schedHrs !== undefined ? row.schedHrs : '0'), { x: cols[3], y, size: sz, font: f, color: clr });
+  page.drawText(String(row.qty !== undefined && row.qty !== '' ? row.qty : '0'), { x: cols[4], y, size: sz, font: f, color: clr });
+  drawRight(fmtCurrency(row.rate), R_UNIT, f);
+  drawRight(fmtCurrency(row.subtotal != null ? row.subtotal : 0), R_SUB, f);
   if (row.isFirstRow) {
-    page.drawText('$ ' + Number(row.grandTotal || 0).toFixed(2), { x: cols[7], y, size: 7, font: fontBold, color: clr });
+    drawRight(fmtCurrency(row.grandTotal || 0), R_GT, fontBold);
   }
 }
  
