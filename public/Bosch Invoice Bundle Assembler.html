@@ -2205,7 +2205,7 @@ async function addSummaryPages(mergedPdf) {
 function drawTableHeader(page, y, font, fontBold) {
   const cols = [50, 280, 350, 430, 490, 545, 620, 710];
   const headers = ['Description', 'Invoice #', 'Type', 'Scheduled Hours', 'Hours Worked', 'Unit Price', 'Subtotal', 'Grand Total'];
-  const rightAlignCols = { 5: 618, 6: 708, 7: 780 }; // right edges matching drawTableRow
+  const rightAlignCols = { 5: 618, 6: 708, 7: 766 }; // right edges matching drawTableRow
   const sz = 7;
   const white = PDFLib.rgb(1, 1, 1);
   page.drawRectangle({ x: 48, y: y - 4, width: 720, height: 16, color: PDFLib.rgb(0.42, 0.44, 0.5) });
@@ -2231,7 +2231,7 @@ function fmtCurrency(val) {
 function drawTableRow(page, y, row, font, fontBold) {
   const cols = [50, 280, 350, 430, 490, 545, 620, 710];
   // Right edges for the three currency columns
-  const R_UNIT = 618, R_SUB = 708, R_GT = 780;
+  const R_UNIT = 618, R_SUB = 708, R_GT = 766;
   const clr = PDFLib.rgb(0, 0, 0);
   const sz = 7;
 
