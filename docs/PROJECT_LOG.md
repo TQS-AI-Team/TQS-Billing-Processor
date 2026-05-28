@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.5.6 | 2026-05-28 | Bump `APP_VERSION` to 2.5.5 in `index.html`; add v2.5.5 and v2.5.3 changelog entries. | `757c44e` |
 | v2.5.5 | 2026-05-28 | PDF summary: group-aware pagination keeps each location's rows together (no mid-group page breaks); currency columns right-aligned with thousands separators; column headers right-aligned to match. | `c1350a3` |
 | v2.5.4 | 2026-05-28 | Bump `APP_VERSION` to 2.5.3 in `index.html`; add v2.5.3 changelog entry. | `690b2ee` |
 | v2.5.3 | 2026-05-28 | Fix PDF summary pagination: first page now correctly allocated 16 rows (header consumes ~308 pts of the 572 pt page); continuation pages increased from 30 to 35 rows. | `7dc645a` |
