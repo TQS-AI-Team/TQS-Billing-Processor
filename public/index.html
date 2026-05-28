@@ -911,8 +911,16 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.5.3';
+const APP_VERSION='2.5.5';
 const CHANGELOG=[
+  {
+    version:'2.5.5',
+    date:'2026-05-28',
+    changes:[
+      '<b>PDF summary pagination</b> now keeps each location group together — if a group doesn\'t fit in the remaining space on a page, it starts on the next page instead of splitting mid-group.',
+      '<b>Currency columns</b> (Unit Price, Subtotal, Grand Total) are now right-aligned with thousands separators ($1,234.56). Column headers right-aligned to match.',
+    ]
+  },
   {
     version:'2.5.3',
     date:'2026-05-28',
