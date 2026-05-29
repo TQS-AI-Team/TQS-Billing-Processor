@@ -2460,7 +2460,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateBillingPeriodDates();
  
   document.getElementById('invoiceDate').value = now.toISOString().split('T')[0];
-  const due = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const due = new Date(now.getFullYear(), now.getMonth() + 3, now.getDate());
   document.getElementById('dueDate').value = due.toISOString().split('T')[0];
 });
 </script>
