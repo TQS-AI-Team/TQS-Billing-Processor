@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.6.0 | 2026-05-29 | Bump `APP_VERSION` to 2.5.9 in `index.html`; add v2.5.9 changelog entry. | `8859b7e` |
 | v2.5.9 | 2026-05-29 | Due date default changed from last day of current month to 3 months from today. | `5a22e00` |
 | v2.5.8 | 2026-05-28 | Fix Grand Total column heading cutoff — right edge pulled from 780 to 766 to stay within table background rectangle (x=48+720=768). | `dfd0243` |
 | v2.5.7 | 2026-05-28 | Format header Total Amount Due with thousands separator and right-align within its box using `fmtCurrency`. | `69d04c5` |
