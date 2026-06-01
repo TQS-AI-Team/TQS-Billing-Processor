@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.6.3 | 2026-06-01 | Audit review UI simplified: per-row `✓ / Fix / —` trio collapsed to two explicit buttons — `Keep as-billed` (no CSV change) and `Apply fix → $X` (writes calculated value, with the exact dollar amount on the button). Old `✓` / `—` were ambiguous and had identical CSV effect. Per-section bulk `✓ All` / `— All` merged into a single `Keep all as-billed`. CHANGES-step buttons relabeled `Apply change` / `Skip change` for consistency. Bump `APP_VERSION` to 2.6.1. | `5bf9a3e` |
 | v2.6.2 | 2026-06-01 | Add `.gitignore` for `node_modules/` and `package-lock.json` (artifacts from a local `npm install`; never tracked in this repo). | `cdf6acd` |
 | v2.6.1 | 2026-06-01 | Strip trailing `MANIPULATED` from uploaded `.xlsx` name (fixes doubled `_MANIPULATED_MANIPULATED.csv` that pushed SharePoint paths past Windows' 260-char `MAX_PATH`, blocking Excel open). SP upload now surfaces Graph errors via per-file alert + progress bar from `☁ SP` (not just "Upload all"). Bump `APP_VERSION` to 2.6.0. | `88e8c51` |
 | v2.6.0 | 2026-05-29 | Bump `APP_VERSION` to 2.5.9 in `index.html`; add v2.5.9 changelog entry. | `8859b7e` |
