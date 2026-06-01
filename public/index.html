@@ -911,8 +911,16 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.5.9';
+const APP_VERSION='2.6.0';
 const CHANGELOG=[
+  {
+    version:'2.6.0',
+    date:'2026-06-01',
+    changes:[
+      'Fix <b>duplicated <code>MANIPULATED</code> suffix</b> in CSV filenames — if the uploaded source <code>.xlsx</code> already ended in <code>MANIPULATED</code>, the output was named <code>..._MANIPULATED_MANIPULATED.csv</code>, pushing the full SharePoint path past Windows\' 260-char limit and causing Excel to refuse to open the file. A trailing <code>MANIPULATED</code> (with space or underscore) on the source name is now stripped automatically.',
+      '<b>SharePoint upload feedback</b> — the <code>☁ SP</code> button now shows the progress bar (previously only "Upload all" did) and an alert at the end summarizes successes/failures with the specific Graph API error per file, so silent failures (popup blocked, auth expired, HTTP errors) are now visible.',
+    ]
+  },
   {
     version:'2.5.9',
     date:'2026-05-29',
@@ -1377,7 +1385,7 @@ function dl(k){document.getElementById('sl-'+k).classList.remove('dov')}
 function dd(e,k){e.preventDefault();dl(k);const f=e.dataTransfer.files[0];if(f)lf(f,k)}
 function lf(file,key){
   if(!file)return;
-  FN[key]=file.name.replace(/\.xlsx?$/i,'');
+  FN[key]=file.name.replace(/\.xlsx?$/i,'').replace(/[\s_]+MANIPULATED$/i,'');
   const r=new FileReader();
   r.onload=e=>{
     WB[key]=XLSX.read(e.target.result,{type:'array',cellDates:false,raw:true});
@@ -2719,7 +2727,8 @@ async function uploadFileToSP(csv, spPath) {
       token = await getGraphToken();
     } catch(authErr) {
       console.error('SharePoint auth failed:', authErr);
-      return false;
+      const m = authErr && authErr.message || String(authErr);
+      return { ok:false, error:`Sign-in failed: ${m}. If a popup was blocked, allow popups for this site and try again.` };
     }
     const { driveId } = CONFIG.sharePoint;
     const r = await fetch(
@@ -2730,16 +2739,74 @@ async function uploadFileToSP(csv, spPath) {
         body: new Blob([csv], { type: 'text/csv' }),
       }
     );
-    if (r.status === 401) {
-      // Token may be stale — clear cache and surface error
-      console.error('Graph API 401 — user may need to re-authenticate');
-      return false;
+    if (!r.ok) {
+      const body = await r.text().catch(()=>'');
+      const msg = r.status === 401
+        ? 'HTTP 401 — re-authentication needed (token rejected by Graph)'
+        : `HTTP ${r.status} ${r.statusText}${body?': '+body.slice(0,300):''}`;
+      console.error('Graph API error:', msg);
+      return { ok:false, error: msg };
     }
-    return r.ok;
-  } catch(e) { return false; }
+    return { ok:true };
+  } catch(e) { return { ok:false, error: e && e.message || String(e) }; }
 }
-async function upItem(key){for(const s of Object.keys(CSV_DATA[key]||{}).filter(s=>CSV_DATA[key][s])){const el=document.getElementById(`csv-${key}-${s}`),st=document.getElementById(`cst-${key}-${s}`);if(el)el.className='csv-i upl';if(st)st.textContent='⏳';const ok=await uploadFileToSP(CSV_DATA[key][s],buildSPPath(`${s}_${FN[key]}_MANIPULATED.csv`));if(el)el.className=`csv-i ${ok?'done':'err'}`;if(st)st.textContent=ok?'✅':'❌';}}
-async function uploadAll(){document.getElementById('upBar').classList.remove('hidden');let total=0,done=0;['A','B','C','D'].forEach(k=>{if(CSV_DATA[k])total+=Object.keys(CSV_DATA[k]).filter(s=>CSV_DATA[k][s]).length;});for(const key of['A','B','C','D']){if(!CSV_DATA[key])continue;for(const s of Object.keys(CSV_DATA[key]).filter(s=>CSV_DATA[key][s])){const fn=`${s}_${FN[key]}_MANIPULATED.csv`;const el=document.getElementById(`csv-${key}-${s}`),st=document.getElementById(`cst-${key}-${s}`);if(el)el.className='csv-i upl';if(st)st.textContent='⏳';document.getElementById('upStat').textContent=`${done+1}/${total}: ${fn}`;const ok=await uploadFileToSP(CSV_DATA[key][s],buildSPPath(fn));done++;document.getElementById('upPf').style.width=((done/total)*100)+'%';if(el)el.className=`csv-i ${ok?'done':'err'}`;if(st)st.textContent=ok?'✅':'❌';}}document.getElementById('upStat').textContent='Done';document.getElementById('upOverall').textContent=`${document.querySelectorAll('.csv-i.done').length}/${total} uploaded`;}
+function reportSPUpload(done,errors){
+  const ok=done-errors.length;
+  if(errors.length){
+    alert(`SharePoint upload finished: ${ok}/${done} succeeded, ${errors.length} failed.\n\n${errors.map(e=>'• '+e).join('\n\n')}`);
+  }else if(done>0){
+    alert(`✅ All ${done} file(s) uploaded to SharePoint.`);
+  }else{
+    alert('Nothing to upload.');
+  }
+}
+async function upItem(key){
+  const sheets=Object.keys(CSV_DATA[key]||{}).filter(s=>CSV_DATA[key][s]);
+  document.getElementById('upBar').classList.remove('hidden');
+  document.getElementById('upPf').style.width='0%';
+  document.getElementById('upStat').textContent=sheets.length?`0/${sheets.length}: starting...`:'Nothing to upload';
+  let done=0;const errors=[];
+  for(const s of sheets){
+    const el=document.getElementById(`csv-${key}-${s}`),st=document.getElementById(`cst-${key}-${s}`);
+    if(el)el.className='csv-i upl';if(st)st.textContent='⏳';
+    const fn=`${s}_${FN[key]}_MANIPULATED.csv`;
+    document.getElementById('upStat').textContent=`${done+1}/${sheets.length}: ${fn}`;
+    const res=await uploadFileToSP(CSV_DATA[key][s],buildSPPath(fn));
+    done++;
+    document.getElementById('upPf').style.width=((done/sheets.length)*100)+'%';
+    if(el)el.className=`csv-i ${res.ok?'done':'err'}`;
+    if(st)st.textContent=res.ok?'✅':'❌';
+    if(!res.ok)errors.push(`${fn}: ${res.error}`);
+  }
+  document.getElementById('upStat').textContent=errors.length?`${done-errors.length}/${done} uploaded, ${errors.length} failed`:`${done}/${done} uploaded`;
+  document.getElementById('upOverall').textContent=`${document.querySelectorAll('.csv-i.done').length} uploaded total`;
+  reportSPUpload(done,errors);
+}
+async function uploadAll(){
+  document.getElementById('upBar').classList.remove('hidden');
+  document.getElementById('upPf').style.width='0%';
+  let total=0,done=0;const errors=[];
+  ['A','B','C','D'].forEach(k=>{if(CSV_DATA[k])total+=Object.keys(CSV_DATA[k]).filter(s=>CSV_DATA[k][s]).length;});
+  document.getElementById('upStat').textContent=total?`0/${total}: starting...`:'Nothing to upload';
+  for(const key of['A','B','C','D']){
+    if(!CSV_DATA[key])continue;
+    for(const s of Object.keys(CSV_DATA[key]).filter(s=>CSV_DATA[key][s])){
+      const fn=`${s}_${FN[key]}_MANIPULATED.csv`;
+      const el=document.getElementById(`csv-${key}-${s}`),st=document.getElementById(`cst-${key}-${s}`);
+      if(el)el.className='csv-i upl';if(st)st.textContent='⏳';
+      document.getElementById('upStat').textContent=`${done+1}/${total}: ${fn}`;
+      const res=await uploadFileToSP(CSV_DATA[key][s],buildSPPath(fn));
+      done++;
+      document.getElementById('upPf').style.width=((done/total)*100)+'%';
+      if(el)el.className=`csv-i ${res.ok?'done':'err'}`;
+      if(st)st.textContent=res.ok?'✅':'❌';
+      if(!res.ok)errors.push(`${fn}: ${res.error}`);
+    }
+  }
+  document.getElementById('upStat').textContent=errors.length?`${total-errors.length}/${total} uploaded, ${errors.length} failed`:'Done';
+  document.getElementById('upOverall').textContent=`${document.querySelectorAll('.csv-i.done').length}/${total} uploaded`;
+  reportSPUpload(done,errors);
+}
 
 function resetAll(){
   ['A','B','C','D'].forEach(k=>{WB[k]=null;FN[k]='';document.getElementById('sl-'+k).classList.remove('ld','dov');document.getElementById('sn-'+k).className='sno';document.getElementById('sn-'+k).textContent={A:'Monthly By Week',B:'Monthly Totaled',C:'Pre-Billing AH/WP',D:'Flat Rate'}[k];});
