@@ -911,8 +911,16 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.6.0';
+const APP_VERSION='2.6.1';
 const CHANGELOG=[
+  {
+    version:'2.6.1',
+    date:'2026-06-01',
+    changes:[
+      '<b>Clearer audit review buttons.</b> The cryptic <code>✓ / Fix / —</code> trio on each audit finding was confusing — the check looked like "approve the fix" but actually meant "keep as-billed", and the dash had the same effect on the CSV as the check (only the audit log label differed). The audit row now has just two explicit buttons: <code>Keep as-billed</code> (no CSV change) and <code>Apply fix → $X</code> (overwrites the billed amount with the calculated value, with the exact dollar amount on the button). The rule-change buttons at the top of step 3 are also relabeled <code>Apply change</code> / <code>Skip change</code> for consistency.',
+      'Per-section <code>✓ All</code> / <code>— All</code> on audit groups consolidated to a single <code>Keep all as-billed</code> button.',
+    ]
+  },
   {
     version:'2.6.0',
     date:'2026-06-01',
@@ -2286,8 +2294,8 @@ function renderSpecialChanges(changes){
           <span style="font-size:10px;color:var(--t2);font-style:italic">${ch.reason}</span>
         </div>
         <div class="apc">
-          <button class="ap ok" id="ap-${ch.id}" onclick="decide(${ch.id},true)">✓</button>
-          <button class="ap no" id="dn-${ch.id}" onclick="decide(${ch.id},false)">✕</button>
+          <button class="ap ok" id="ap-${ch.id}" onclick="decide(${ch.id},true)" title="Apply this change in the generated CSV">Apply change</button>
+          <button class="ap no" id="dn-${ch.id}" onclick="decide(${ch.id},false)" title="Don't apply this change — leave the row as originally exported">Skip change</button>
         </div>
       </div>`).join('')}
     </div></div>`).join('');
@@ -2318,7 +2326,7 @@ function renderAuditDecisions(items){
       <div style="display:flex;gap:6px;align-items:center">
         ${errors.length?`<span class="abadge ab-e">${errors.length} error${errors.length!==1?'s':''}</span>`:''}
         ${flags.length?`<span class="abadge ab-f">${flags.length} flagged</span>`:''}
-        <button class="ap ok" style="font-size:11px;padding:3px 10px" onclick="auditApproveAllSections()">✓ Approve All</button>
+        <button class="ap ok" style="font-size:11px;padding:3px 10px" onclick="auditApproveAllSections()" title="Keep every audit finding as-billed (no CSV changes). Use the per-row 'Apply fix' button to actually correct a billed amount.">Keep all as-billed</button>
       </div>
     </div>
     ${Object.entries(byType).map(([type,aitems])=>{
@@ -2332,8 +2340,7 @@ function renderAuditDecisions(items){
           ${errCnt?`<span class="abadge ab-e">${errCnt} error${errCnt!==1?'s':''}</span>`:''}
           ${flagCnt?`<span class="abadge ab-f">${flagCnt} flagged</span>`:''}
           <div style="margin-left:auto;display:flex;gap:5px" onclick="event.stopPropagation()">
-            <button class="ap ok" style="font-size:11px;padding:3px 9px" onclick="approveSection('${type}')">✓ All</button>
-            <button class="ap skip" style="font-size:11px;padding:3px 9px" onclick="skipSection('${type}')">— All</button>
+            <button class="ap ok" style="font-size:11px;padding:3px 9px" onclick="approveSection('${type}')" title="Keep every row in this section as-billed (no CSV changes)">Keep all as-billed</button>
             <button class="tog" style="margin-left:4px">hide</button>
           </div>
           ${d?`<div style="width:100%;font-size:11px;font-weight:400;opacity:.75;padding-top:2px;line-height:1.5">${d}</div>`:''}
@@ -2359,9 +2366,8 @@ function renderAuditDecisions(items){
                 ${diff!==null?`<span style="font-size:10px;color:${diff!==0?'var(--red)':'var(--green)'}">${diff>=0?'+':''}$${diff}</span>`:''}
               </div>
               <div class="apc">
-                <button class="ap ok" id="aok-${a.id}" onclick="adecide(${a.id},'accept')">✓</button>
-                ${a.fix?`<button class="ap fix" id="afix-${a.id}" onclick="adecide(${a.id},'fix')">Fix</button>`:''}
-                <button class="ap skip" id="ask-${a.id}" onclick="adecide(${a.id},'skip')">—</button>
+                <button class="ap ok" id="aok-${a.id}" onclick="adecide(${a.id},'accept')" title="Leave the billed amount unchanged in the CSV">Keep as-billed</button>
+                ${a.fix?`<button class="ap fix" id="afix-${a.id}" onclick="adecide(${a.id},'fix')" title="Overwrite the billed amount with the calculated value in the CSV">Apply fix${a.calcAmt!=null?` → $${a.calcAmt}`:''}</button>`:''}
               </div>
             </div>`;
           }).join('')}
@@ -2422,8 +2428,9 @@ function toggleRev(hdr){const body=hdr.closest('.rev')?.querySelector('.rev-body
 function decide(id,approved){const ch=CHANGES.find(c=>c.id===id);if(!ch)return;ch.approved=approved;const a=document.getElementById('ap-'+id),d=document.getElementById('dn-'+id);if(a)a.classList.toggle('act',approved);if(d)d.classList.toggle('act',!approved);updateGenStat();}
 function adecide(id,choice){
   const a=AUDIT.find(x=>x.id===id);if(!a)return;a.decision=choice;
-  const ok=document.getElementById('aok-'+id),fix=document.getElementById('afix-'+id),sk=document.getElementById('ask-'+id);
-  if(ok)ok.classList.toggle('act',choice==='accept');if(fix)fix.classList.toggle('act',choice==='fix');if(sk)sk.classList.toggle('act',choice==='skip');
+  const ok=document.getElementById('aok-'+id),fix=document.getElementById('afix-'+id);
+  if(ok)ok.classList.toggle('act',choice==='accept');
+  if(fix)fix.classList.toggle('act',choice==='fix');
   updateGenStat();
 }
 function approveAll(){
@@ -2685,7 +2692,7 @@ function renderAuditReport(){
               <div class="collapsed">
                 <div class="ar-row hrow"><div class="arc">Customer</div><div class="arc">SA</div><div class="arc">Finding</div><div class="arc">Decision</div></div>
                 ${items.map(a=>{
-                  const dLabel=a.sev==='ok'?'✓ Passed':a.decision==='fix'?'🔧 Fixed':a.decision==='accept'?'✓ Accepted':a.decision==='skip'?'— Skipped':'Pending';
+                  const dLabel=a.sev==='ok'?'✓ Passed':a.decision==='fix'?'🔧 Fix applied':(a.decision==='accept'||a.decision==='skip')?'✓ Kept as-billed':'Pending';
                   return`<div class="ar-row">
                     <div class="arc" style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--red)">${a.custId}<br/><span style="font-weight:400;color:var(--t3)">Item ${a.fileKey}/${a.sheet}</span></div>
                     <div class="arc" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--t2)">${a.sa}</div>
@@ -2694,7 +2701,7 @@ function renderAuditReport(){
                       <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--t2)">${a.calc.split('\n')[0]}</span>
                       ${a.billed!==null&&a.calcAmt!==null?`<span style="font-size:10px;color:${a.billed!==a.calcAmt?'var(--red)':'var(--green)'}">Billed $${a.billed} · Expected $${a.calcAmt}</span>`:''}
                     </div>
-                    <div class="arc"><span class="verdict ${a.sev==='ok'||a.decision==='accept'?'v-ok':a.decision==='fix'?'v-err':a.decision==='skip'?'':'v-flag'}">${dLabel}</span></div>
+                    <div class="arc"><span class="verdict ${a.sev==='ok'||a.decision==='accept'||a.decision==='skip'?'v-ok':a.decision==='fix'?'v-err':'v-flag'}">${dLabel}</span></div>
                   </div>`;
                 }).join('')}
               </div>
