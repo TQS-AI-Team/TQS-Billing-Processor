@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.6.1 | 2026-06-01 | Strip trailing `MANIPULATED` from uploaded `.xlsx` name (fixes doubled `_MANIPULATED_MANIPULATED.csv` that pushed SharePoint paths past Windows' 260-char `MAX_PATH`, blocking Excel open). SP upload now surfaces Graph errors via per-file alert + progress bar from `☁ SP` (not just "Upload all"). Bump `APP_VERSION` to 2.6.0. | `88e8c51` |
 | v2.6.0 | 2026-05-29 | Bump `APP_VERSION` to 2.5.9 in `index.html`; add v2.5.9 changelog entry. | `8859b7e` |
 | v2.5.9 | 2026-05-29 | Due date default changed from last day of current month to 3 months from today. | `5a22e00` |
 | v2.5.8 | 2026-05-28 | Fix Grand Total column heading cutoff — right edge pulled from 780 to 766 to stay within table background rectangle (x=48+720=768). | `dfd0243` |
