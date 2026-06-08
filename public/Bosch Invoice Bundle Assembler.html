@@ -439,6 +439,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
  
       <div class="upload-grid" style="margin-top:20px">
         <div class="card">
+          <h3>Other / Non-Qnet Invoice PDFs
+            <span class="tooltip"><span class="tip-icon">?</span><span class="tip-text">Invoices for locations not covered by the Qnet agreement database. OCR will extract the location name. These appear at the bottom of the summary and bundle.</span></span>
+          </h3>
+          <p class="subtitle">One or more PDFs for non-Qnet locations</p>
+          <div class="upload-zone" id="zone-other" onclick="document.getElementById('file-other').click()">
+            <div class="icon">&#128196;</div>
+            <div class="label">Drop PDFs here or click to browse</div>
+            <div class="hint">Accepts multiple .pdf files</div>
+            <input type="file" id="file-other" accept=".pdf" multiple onchange="handleFileUpload(event,'other')">
+          </div>
+          <div class="file-list" id="files-other"></div>
+        </div>
+      </div>
+
+      <div class="upload-grid" style="margin-top:20px">
+        <div class="card">
           <h3>OCR Engine</h3>
           <p class="subtitle">Invoice OCR is powered by Claude via N8N webhook. No API key needed.</p>
           <div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--success-bg);border-radius:var(--radius);border:1px solid var(--success)">
@@ -457,7 +473,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
         <span>&#9432;</span>
         <span>Invoice pages are sent to Claude as images for OCR extraction. This may take a few minutes depending on the number of pages. You can edit any extracted data before proceeding.</span>
       </div>
- 
+
+      <div id="incrementalBanner" style="display:none;margin-bottom:16px;background:var(--info-bg,#eff6ff);border:1px solid var(--info,#3b82f6);border-radius:var(--radius,6px);padding:12px 16px">
+        <div style="font-size:13px;margin-bottom:8px"><span id="incrementalMsg"></span></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="startParsing({incremental:true})">Extract New Files Only</button>
+          <button class="btn btn-secondary" onclick="startParsing({incremental:false})">Re-extract Everything</button>
+        </div>
+      </div>
+
       <div class="card">
         <h3>Processing Progress</h3>
         <div id="parseStatus" class="progress-text">Ready to begin...</div>
@@ -605,11 +629,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 const APP = {
   currentStep: 1,
   maxStep: 1,
-  files: { regular: [], expense: [], qnet: [], expapproval: [], billing: null },
+  files: { regular: [], expense: [], qnet: [], expapproval: [], billing: null, other: [] },
   apiKey: '',
   // Parsed data
   regularPages: [],    // [{pageIndex, imageData, pdfBytes}]
   expensePages: [],
+  otherPages: [],
   invoices: [],        // [{id, source, pages[], invoiceNumber, location, customer, type, lineItems[], grandTotal}]
   approvals: { qnet: [], expense: [] }, // [{file, name, text, suggestedLocation}]
   approvalAssignments: {}, // approvalId -> invoiceId
@@ -617,6 +642,9 @@ const APP = {
   sortedInvoices: [],  // final sorted order
   bundleOrder: [],     // final page order for PDF assembly
   abortParsing: false,
+  // Incremental extraction tracking
+  otherFiles: [],
+  processedFileKeys: { regular: [], expense: [], other: [] },
   // Header values
   headerValues: {},
 };
@@ -642,6 +670,7 @@ function goToStep(step) {
   document.getElementById('btnNext').textContent = step === 5 ? 'Finish' : 'Next →';
   if (step === 5) document.getElementById('btnNext').style.display = 'none';
   else document.getElementById('btnNext').style.display = '';
+  if (step === 2) checkIncrementalBanner();
 }
 function nextStep() {
   if (APP.currentStep === 1 && !validateStep1()) return;
@@ -1008,110 +1037,185 @@ Extract and return JSON with these exact fields:
 If the page is blank, return {"blank": true}.
 Return ONLY the JSON object, no other text.`;
  
-async function startParsing() {
+function fileKey(f) {
+  return `${f.name}|${f.size}|${f.lastModified}`;
+}
+
+function checkIncrementalBanner() {
+  const banner = document.getElementById('incrementalBanner');
+  const msg = document.getElementById('incrementalMsg');
+  const btn = document.getElementById('btnStartParse');
+  if (!banner || !msg) return;
+  const existing = (APP.invoices || []).length;
+  if (existing === 0) { banner.style.display = 'none'; if (btn) btn.style.display = ''; return; }
+  const pk = APP.processedFileKeys || { regular: [], expense: [], other: [] };
+  const newCount = [
+    ...(APP.files.regular || []).filter(f => !pk.regular.includes(fileKey(f))),
+    ...(APP.files.expense || []).filter(f => !pk.expense.includes(fileKey(f))),
+    ...(APP.files.other || []).filter(f => !(pk.other || []).includes(fileKey(f)))
+  ].length;
+  if (newCount === 0) { banner.style.display = 'none'; if (btn) btn.style.display = ''; return; }
+  msg.innerHTML = `<b>${existing} invoice${existing !== 1 ? 's' : ''} already extracted.</b> ${newCount} new file${newCount !== 1 ? 's' : ''} detected. Choose how to proceed:`;
+  banner.style.display = 'block';
+  if (btn) btn.style.display = 'none';
+}
+
+async function startParsing(opts) {
+  const incremental = !!(opts && opts.incremental);
+  const banner = document.getElementById('incrementalBanner');
+  if (banner) banner.style.display = 'none';
+
   APP.abortParsing = false;
-  APP.invoices = [];
+  if (!incremental) {
+    APP.invoices = [];
+    APP.processedFileKeys = { regular: [], expense: [], other: [] };
+    APP.regularFiles = []; APP.regularPages = [];
+    APP.expenseFiles = []; APP.expensePages = [];
+    APP.otherFiles = []; APP.otherPages = [];
+  }
   document.getElementById('btnStartParse').style.display = 'none';
   document.getElementById('btnStopParse').style.display = '';
   document.getElementById('parseLog').innerHTML = '';
   document.getElementById('extractedDataCard').style.display = 'none';
- 
+
   try {
-    // 1. Convert regular PDF pages (now supports multiple files)
-    APP.regularFiles = []; // array of { file, pages, arrayBuf }
-    APP.regularPages = [];
-    logMsg(`Loading ${APP.files.regular.length} regular invoice PDF(s)...`, 'info');
-    for (let fi = 0; fi < APP.files.regular.length; fi++) {
-      const file = APP.files.regular[fi];
-      const regResult = await pdfToPages(file);
-      regResult.pages.forEach(p => { p.sourceFileIndex = fi; });
-      APP.regularFiles.push({ file, pages: regResult.pages, arrayBuf: regResult.arrayBuf });
-      APP.regularPages.push(...regResult.pages);
-      logMsg(`  Regular file "${file.name}": ${regResult.pages.length} pages loaded.`, 'success');
+    const pk = APP.processedFileKeys || { regular: [], expense: [], other: [] };
+    const toProcess = {
+      regular: incremental ? (APP.files.regular || []).filter(f => !pk.regular.includes(fileKey(f))) : (APP.files.regular || []),
+      expense: incremental ? (APP.files.expense || []).filter(f => !pk.expense.includes(fileKey(f))) : (APP.files.expense || []),
+      other: incremental ? (APP.files.other || []).filter(f => !(pk.other || []).includes(fileKey(f))) : (APP.files.other || [])
+    };
+
+    // 1. Convert regular PDF pages
+    const newRegularPages = [];
+    if (toProcess.regular.length > 0) {
+      logMsg(`Loading ${toProcess.regular.length} regular invoice PDF(s)...`, 'info');
+      for (let fi = 0; fi < toProcess.regular.length; fi++) {
+        const file = toProcess.regular[fi];
+        const regResult = await pdfToPages(file);
+        const globalFi = (APP.regularFiles || []).length;
+        regResult.pages.forEach(p => { p.sourceFileIndex = globalFi; });
+        APP.regularFiles.push({ file, pages: regResult.pages, arrayBuf: regResult.arrayBuf });
+        APP.regularPages.push(...regResult.pages);
+        newRegularPages.push(...regResult.pages);
+        logMsg(`  Regular file "${file.name}": ${regResult.pages.length} pages loaded.`, 'success');
+      }
+      logMsg(`Regular invoices: ${APP.regularPages.length} total pages from ${APP.regularFiles.length} files.`, 'success');
     }
-    logMsg(`Regular invoices: ${APP.regularPages.length} total pages from ${APP.files.regular.length} files.`, 'success');
- 
-    // 2. Convert expense PDF pages (if uploaded — now multiple individual files)
-    APP.expenseFiles = []; // array of { file, pages, arrayBuf }
-    if (APP.files.expense.length > 0) {
-      logMsg(`Loading ${APP.files.expense.length} expense invoice PDF(s)...`, 'info');
-      APP.expensePages = [];
-      let globalExpPageOffset = 0;
-      for (let fi = 0; fi < APP.files.expense.length; fi++) {
-        const file = APP.files.expense[fi];
+
+    // 2. Convert expense PDF pages
+    const newExpensePages = [];
+    if (toProcess.expense.length > 0) {
+      logMsg(`Loading ${toProcess.expense.length} expense invoice PDF(s)...`, 'info');
+      for (let fi = 0; fi < toProcess.expense.length; fi++) {
+        const file = toProcess.expense[fi];
         const expResult = await pdfToPages(file);
-        // Tag each page with its source file index
-        expResult.pages.forEach(p => { p.sourceFileIndex = fi; });
+        const globalFi = (APP.expenseFiles || []).length;
+        expResult.pages.forEach(p => { p.sourceFileIndex = globalFi; });
         APP.expenseFiles.push({ file, pages: expResult.pages, arrayBuf: expResult.arrayBuf });
         APP.expensePages.push(...expResult.pages);
+        newExpensePages.push(...expResult.pages);
         logMsg(`  Expense file "${file.name}": ${expResult.pages.length} pages loaded.`, 'success');
       }
-      logMsg(`Expense invoices: ${APP.expensePages.length} total pages from ${APP.files.expense.length} files.`, 'success');
+      logMsg(`Expense invoices: ${APP.expensePages.length} total pages from ${APP.expenseFiles.length} files.`, 'success');
     }
- 
-    // 3. Parse Qnet report CSV (if uploaded)
-    if (APP.files.billing) {
+
+    // 3. Convert other PDF pages (non-Qnet locations)
+    const newOtherPages = [];
+    if (toProcess.other.length > 0) {
+      logMsg(`Loading ${toProcess.other.length} other invoice PDF(s)...`, 'info');
+      for (let fi = 0; fi < toProcess.other.length; fi++) {
+        const file = toProcess.other[fi];
+        const result = await pdfToPages(file);
+        const globalFi = (APP.otherFiles || []).length;
+        result.pages.forEach(p => { p.sourceFileIndex = globalFi; });
+        APP.otherFiles.push({ file, pages: result.pages, arrayBuf: result.arrayBuf });
+        APP.otherPages.push(...result.pages);
+        newOtherPages.push(...result.pages);
+        logMsg(`  Other file "${file.name}": ${result.pages.length} pages loaded.`, 'success');
+      }
+      logMsg(`Other invoices: ${APP.otherPages.length} total pages from ${APP.otherFiles.length} files.`, 'success');
+    }
+
+    // 4. Parse Qnet report CSV (full extract only)
+    if (!incremental && APP.files.billing) {
       logMsg('Parsing Qnet report CSV...', 'info');
       await parseBillingReport();
       logMsg(`Qnet report parsed: ${APP.billingData.length} rows.`, 'success');
     }
- 
-    // 4. Extract text from approval PDFs
-    logMsg('Processing approval attachments...', 'info');
-    await processApprovals();
- 
-    // 5. OCR regular invoice pages
-    const totalPages = APP.regularPages.length + APP.expensePages.length;
-    let processed = 0;
- 
-    logMsg('--- Starting OCR on regular invoices ---', 'info');
-    const regularInvoices = await processInvoicePages(APP.regularPages, 'regular', REGULAR_PROMPT, () => {
-      processed++;
-      updateProgress(processed, totalPages);
-    });
- 
-    // 6. OCR expense invoice pages
-    let expenseInvoices = [];
-    if (APP.expensePages.length > 0) {
-      logMsg('--- Starting OCR on expense invoices ---', 'info');
-      expenseInvoices = await processInvoicePages(APP.expensePages, 'expense', EXPENSE_PROMPT, () => {
-        processed++;
-        updateProgress(processed, totalPages);
-      });
+
+    // 5. Extract text from approval PDFs (full extract only)
+    if (!incremental) {
+      logMsg('Processing approval attachments...', 'info');
+      await processApprovals();
     }
- 
-    APP.invoices = [...regularInvoices, ...expenseInvoices];
-    logMsg(`\nExtraction complete: ${APP.invoices.length} invoices found.`, 'success');
- 
-    // 7. Fetch ALL Bosch agreement data from Qnet database for scheduled hours
+
+    // 6. OCR pages
+    const totalPages = newRegularPages.length + newExpensePages.length + newOtherPages.length;
+    let processed = 0;
+
+    logMsg('--- Starting OCR on regular invoices ---', 'info');
+    const newRegularInvoices = await processInvoicePages(newRegularPages, 'regular', REGULAR_PROMPT, () => { processed++; updateProgress(processed, totalPages); });
+
+    let newExpenseInvoices = [];
+    if (newExpensePages.length > 0) {
+      logMsg('--- Starting OCR on expense invoices ---', 'info');
+      newExpenseInvoices = await processInvoicePages(newExpensePages, 'expense', EXPENSE_PROMPT, () => { processed++; updateProgress(processed, totalPages); });
+    }
+
+    let newOtherInvoices = [];
+    if (newOtherPages.length > 0) {
+      logMsg('--- Starting OCR on other (non-Qnet) invoices ---', 'info');
+      newOtherInvoices = await processInvoicePages(newOtherPages, 'other', REGULAR_PROMPT, () => { processed++; updateProgress(processed, totalPages); });
+    }
+
+    // 7. Merge invoices
+    const freshInvoices = [...newRegularInvoices, ...newExpenseInvoices, ...newOtherInvoices];
+    if (incremental) {
+      const existingKeys = new Set(APP.invoices.map(inv => `${inv.invoiceNumber}|${inv.location}`));
+      let added = 0;
+      freshInvoices.forEach(inv => {
+        const key = `${inv.invoiceNumber}|${inv.location}`;
+        if (!existingKeys.has(key)) { APP.invoices.push(inv); existingKeys.add(key); added++; }
+      });
+      logMsg(`\nIncremental extraction: ${added} new invoice(s) added.`, 'success');
+    } else {
+      APP.invoices = freshInvoices;
+    }
+    logMsg(`\nExtraction complete: ${APP.invoices.length} invoice(s) found.`, 'success');
+
+    // 8. Fetch agreements and attach scheduled hours
     if (APP.headerValues.billingPeriod) {
       const periodStart = APP.headerValues.billingPeriodStart;
       const periodEnd = APP.headerValues.billingPeriodEnd;
-      // Derive week count from actual dates (Monday–Sunday count) rather than stored state
       const msPerDay = 24 * 60 * 60 * 1000;
       const calendarDays = Math.round((new Date(periodEnd) - new Date(periodStart)) / msPerDay) + 1;
       const billingWeeks = Math.round(calendarDays / 7);
-      logMsg(`\nFetching Bosch agreements (period: ${periodStart} to ${periodEnd}, ${calendarDays} calendar days = ${billingWeeks} weeks)...`, 'info');
-      const agreements = await fetchAgreementData(periodStart, periodEnd);
-      APP.agreementData = {};
-      agreements.forEach((ag, i) => {
-        const schedHrs = calculateScheduledHours(ag, periodStart, periodEnd, billingWeeks);
-        APP.agreementData[ag.agreementNumber] = { ...ag, scheduledHours: schedHrs };
-        logMsg(`  F${ag.agreementNumber} @ ${ag.locationName}: contractHours=${ag.contractHours}/wk, otRate=${ag.otRate ?? '(none)'} → scheduledHours=${schedHrs} (${billingWeeks} wks)`, 'info');
-        if (i === 0) logMsg(`  [first agreement fields] ${Object.keys(ag).join(', ')}`, 'info');
-      });
-      logMsg(`Agreement data loaded: ${agreements.length} agreements, ${Object.keys(APP.agreementData).length} unique.`, 'success');
- 
-      // Attach scheduled hours to invoices by matching agreement numbers
-      const agreementNums = [...new Set(APP.invoices.map(inv => inv.agreementNumber).filter(Boolean))];
+
+      if (!incremental) {
+        logMsg(`\nFetching Bosch agreements (period: ${periodStart} to ${periodEnd}, ${calendarDays} calendar days = ${billingWeeks} weeks)...`, 'info');
+        const agreements = await fetchAgreementData(periodStart, periodEnd);
+        APP.agreementData = {};
+        agreements.forEach((ag, i) => {
+          const schedHrs = calculateScheduledHours(ag, periodStart, periodEnd, billingWeeks);
+          APP.agreementData[ag.agreementNumber] = { ...ag, scheduledHours: schedHrs };
+          logMsg(`  F${ag.agreementNumber} @ ${ag.locationName}: contractHours=${ag.contractHours}/wk, otRate=${ag.otRate ?? '(none)'} → scheduledHours=${schedHrs} (${billingWeeks} wks)`, 'info');
+          if (i === 0) logMsg(`  [first agreement fields] ${Object.keys(ag).join(', ')}`, 'info');
+        });
+        logMsg(`Agreement data loaded: ${agreements.length} agreements, ${Object.keys(APP.agreementData).length} unique.`, 'success');
+      }
+
+      // Attach agreement data to non-other invoices
+      const agreementNums = [...new Set(APP.invoices.filter(i => i.source !== 'other').map(inv => inv.agreementNumber).filter(Boolean))];
       logMsg(`Invoice agreement numbers: ${agreementNums.length > 0 ? agreementNums.join(', ') : '(none)'}`, 'info');
       let matched = 0;
-      const availableKeys = Object.keys(APP.agreementData);
+      const availableKeys = Object.keys(APP.agreementData || {});
       APP.invoices.forEach(inv => {
+        if (inv.source === 'other') return;
         const rawNum = inv.agreementNumber || '';
         const cleanNum = rawNum.replace(/^F/i, '');
         logMsg(`  ${inv.invoiceNumber || inv.id}: agreementNumber="${rawNum}" → lookup key="${cleanNum}"`, 'info');
-        if (APP.agreementData[cleanNum]) {
+        if (APP.agreementData && APP.agreementData[cleanNum]) {
           inv.scheduledHours = APP.agreementData[cleanNum].scheduledHours;
           inv.contractHoursWeekly = parseFloat(APP.agreementData[cleanNum].contractHours) || 0;
           const qnetName = APP.agreementData[cleanNum].locationName;
@@ -1126,18 +1230,26 @@ async function startParsing() {
           logMsg(`    → NO MATCH in ${availableKeys.length} agreements (sample keys: ${availableKeys.slice(0,5).join(', ')})`, 'error');
         }
       });
-      logMsg(`Matched ${matched}/${APP.invoices.length} invoices to agreement data.`, 'success');
- 
-      // Also fetch additional hours for this billing period
-      // Use day after billingEnd for the < comparison (query uses a.time < end)
-      const endPlusOne = new Date(new Date(periodEnd).getTime() + 86400000);
-      const endStr = endPlusOne.toISOString().split('T')[0];
-      APP.additionalHours = await fetchAdditionalHours(periodStart, endStr);
+      const nonOtherCount = APP.invoices.filter(i => i.source !== 'other').length;
+      logMsg(`Matched ${matched}/${nonOtherCount} invoices to agreement data.`, 'success');
+
+      // Fetch additional hours (full extract only)
+      if (!incremental) {
+        const endPlusOne = new Date(new Date(periodEnd).getTime() + 86400000);
+        const endStr = endPlusOne.toISOString().split('T')[0];
+        APP.additionalHours = await fetchAdditionalHours(periodStart, endStr);
+      }
     }
- 
+
+    // 9. Record processed file keys
+    APP.processedFileKeys = APP.processedFileKeys || { regular: [], expense: [], other: [] };
+    toProcess.regular.forEach(f => { const k = fileKey(f); if (!APP.processedFileKeys.regular.includes(k)) APP.processedFileKeys.regular.push(k); });
+    toProcess.expense.forEach(f => { const k = fileKey(f); if (!APP.processedFileKeys.expense.includes(k)) APP.processedFileKeys.expense.push(k); });
+    toProcess.other.forEach(f => { const k = fileKey(f); if (!(APP.processedFileKeys.other || []).includes(k)) APP.processedFileKeys.other.push(k); });
+
     // Display the extracted data
     displayExtractedData();
- 
+
   } catch (e) {
     logMsg(`Error: ${e.message}`, 'error');
   } finally {
@@ -1420,22 +1532,36 @@ function esc(str) { return (str||'').replace(/"/g, '&quot;').replace(/</g, '&lt;
  
 // ===== Step 3: Sort & Match =====
 function buildStep3() {
-  // Sort invoices
-  APP.sortedInvoices = [...APP.invoices].sort((a, b) => {
+  // Sort: Qnet invoices first (by location, regular before expense, invoice#), other at end
+  const nonOther = APP.invoices.filter(inv => inv.source !== 'other').sort((a, b) => {
     const locA = (a.location || '').toLowerCase();
     const locB = (b.location || '').toLowerCase();
     if (locA !== locB) return locA.localeCompare(locB);
-    // Regular before expense
     if (a.source !== b.source) return a.source === 'regular' ? -1 : 1;
-    // By invoice number ascending
     return (a.invoiceNumber || '').localeCompare(b.invoiceNumber || '', undefined, { numeric: true });
   });
- 
+  const otherInvs = APP.invoices.filter(inv => inv.source === 'other').sort((a, b) => {
+    const locA = (a.location || '').toLowerCase();
+    const locB = (b.location || '').toLowerCase();
+    if (locA !== locB) return locA.localeCompare(locB);
+    return (a.invoiceNumber || '').localeCompare(b.invoiceNumber || '', undefined, { numeric: true });
+  });
+  APP.sortedInvoices = [...nonOther, ...otherInvs];
+
   // Render sorted list
   const listEl = document.getElementById('sortedInvoiceList');
   listEl.innerHTML = '';
   let currentLoc = '';
+  let otherSectionStarted = false;
   APP.sortedInvoices.forEach((inv, idx) => {
+    if (inv.source === 'other' && !otherSectionStarted) {
+      otherSectionStarted = true;
+      currentLoc = '';
+      const sep = document.createElement('div');
+      sep.style.cssText = 'font-weight:700;font-size:13px;margin:20px 0 8px;padding:4px 8px;background:#fef3c7;border-radius:4px;border-left:3px solid #f59e0b;color:#92400e';
+      sep.textContent = 'Other / Non-Qnet Locations';
+      listEl.appendChild(sep);
+    }
     if (inv.location !== currentLoc) {
       currentLoc = inv.location;
       const header = document.createElement('div');
@@ -1445,9 +1571,10 @@ function buildStep3() {
     }
     const row = document.createElement('div');
     row.className = 'file-item';
+    const badgeClass = inv.source === 'regular' ? 'badge-info' : 'badge-warning';
     row.innerHTML = `
       <span style="width:24px;text-align:center;color:var(--text-muted)">${idx+1}</span>
-      <span class="badge ${inv.source === 'regular' ? 'badge-info' : 'badge-warning'}" style="margin-right:8px">${inv.source}</span>
+      <span class="badge ${badgeClass}" style="margin-right:8px">${inv.source}</span>
       <span class="name">${inv.invoiceNumber || '(no invoice #)'} - ${inv.location}</span>
       <span class="meta">Pages: ${inv.pages.join(', ')} | $${inv.grandTotal.toFixed(2)}</span>
     `;
@@ -1626,8 +1753,9 @@ function buildSummaryRows() {
     locMap[locName].agreements[agrNum] = ag;
   }
  
-  // Then, attach invoices to locations by matching agreement numbers
+  // Then, attach invoices to locations by matching agreement numbers (skip non-Qnet)
   APP.sortedInvoices.forEach(inv => {
+    if (inv.source === 'other') return;
     const cleanNum = (inv.agreementNumber || '').replace(/^F/i, '');
     const ag = APP.agreementData ? APP.agreementData[cleanNum] : null;
     const locName = ag ? ag.locationName : (inv.location || 'Unknown');
@@ -1749,7 +1877,79 @@ function buildSummaryRows() {
       });
     });
   });
- 
+
+  // Second pass: non-Qnet (other) locations — appended after all Qnet rows
+  const otherLocMap = {};
+  APP.sortedInvoices.filter(inv => inv.source === 'other').forEach(inv => {
+    const locName = inv.location || 'Unknown';
+    if (!otherLocMap[locName]) otherLocMap[locName] = [];
+    otherLocMap[locName].push(inv);
+  });
+
+  Object.keys(otherLocMap).sort().forEach(locName => {
+    const invs = otherLocMap[locName];
+    let stdQty = 0, stdTotal = 0, stdRate = null;
+    let addQty = 0, addTotal = 0, addRate = null;
+    let miscTotal = 0;
+    const hstByInvoice = {};
+    let locTotal = 0;
+    const invNumsAll = new Set();
+
+    invs.forEach(inv => {
+      if (inv.invoiceNumber) invNumsAll.add(inv.invoiceNumber);
+      const lineItems = inv.lineItems || [];
+      lineItems.forEach(li => {
+        const sType = (li.serviceType || '').toLowerCase();
+        const sDesc = (li.description || '').toLowerCase();
+        const units = (li.units || '').toLowerCase();
+        if (sType.includes('hst') || sType.includes('tax') || sDesc.includes('hst') || sDesc.includes('tax')) {
+          const key = inv.invoiceNumber || '(unknown)';
+          hstByInvoice[key] = (hstByInvoice[key] || 0) + (li.lineSubtotal || li.amount || 0);
+        } else if (sType.includes('additional')) {
+          addQty += (li.qty || 0);
+          addTotal += (li.lineSubtotal || li.amount || 0);
+          if (li.rate && !addRate) addRate = li.rate;
+        } else if (units === 'hours') {
+          stdQty += (li.qty || 0);
+          stdTotal += (li.lineSubtotal || li.amount || 0);
+          if (li.rate && !stdRate) stdRate = li.rate;
+        } else {
+          miscTotal += (li.lineSubtotal || li.amount || 0);
+        }
+      });
+      locTotal += inv.grandTotal;
+    });
+
+    const invNumStr = [...invNumsAll].sort().join(', ');
+
+    allRows.push({
+      desc: locName, invNum: invNumStr, agreementNum: '',
+      type: 'Standard hours', schedHrs: 0,
+      qty: stdQty || 0, rate: stdRate, subtotal: stdTotal,
+      grandTotal: locTotal, isFirstRow: true
+    });
+
+    allRows.push({
+      desc: locName, invNum: '', agreementNum: '',
+      type: 'Additional hours', schedHrs: 0,
+      qty: addQty || 0, rate: addRate, subtotal: addTotal, grandTotal: ''
+    });
+
+    allRows.push({
+      desc: locName, invNum: '', agreementNum: '',
+      type: 'Miscellaneous', schedHrs: 0,
+      qty: '', rate: null, subtotal: miscTotal, grandTotal: ''
+    });
+
+    Object.entries(hstByInvoice).forEach(([invNum, hstTotal]) => {
+      allRows.push({
+        desc: locName, invNum: '', agreementNum: '',
+        type: 'HST Applied', schedHrs: 0,
+        qty: 0, rate: hstTotal, subtotal: hstTotal, grandTotal: ''
+      });
+    });
+  });
+
   return allRows;
 }
  
@@ -1934,6 +2134,11 @@ async function generateBundle() {
     for (const ef of (APP.expenseFiles || [])) {
       expensePdfDocs.push(await PDFLib.PDFDocument.load(ef.arrayBuf));
     }
+    // Load other (non-Qnet) PDF docs
+    const otherPdfDocs = [];
+    for (const of of (APP.otherFiles || [])) {
+      otherPdfDocs.push(await PDFLib.PDFDocument.load(of.arrayBuf));
+    }
  
     // 3. Add pages in order
     let invoicePages = 0, approvalPages = 0;
@@ -1955,6 +2160,15 @@ async function generateBundle() {
           }
         } else if (step.inv.source === 'expense' && step.inv.sourceFileIndex !== null) {
           const srcDoc = expensePdfDocs[step.inv.sourceFileIndex];
+          if (srcDoc) {
+            for (const pageIdx of step.inv.pages) {
+              const [copiedPage] = await mergedPdf.copyPages(srcDoc, [pageIdx - 1]);
+              normalizePage(copiedPage);
+              mergedPdf.addPage(copiedPage);
+            }
+          }
+        } else if (step.inv.source === 'other' && step.inv.sourceFileIndex !== null) {
+          const srcDoc = otherPdfDocs[step.inv.sourceFileIndex];
           if (srcDoc) {
             for (const pageIdx of step.inv.pages) {
               const [copiedPage] = await mergedPdf.copyPages(srcDoc, [pageIdx - 1]);

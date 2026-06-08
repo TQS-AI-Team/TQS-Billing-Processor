@@ -911,8 +911,16 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.5.9';
+const APP_VERSION='2.6.0';
 const CHANGELOG=[
+  {
+    version:'2.6.0',
+    date:'2026-06-08',
+    changes:[
+      '<b>Other / Non-Qnet Locations</b>: new upload zone in Step 1 for invoices at locations not in Qnet. OCR extracts the location name; these rows appear at the bottom of the summary and bundle PDF.',
+      '<b>Incremental extraction</b>: adding new files to existing zones and returning to Step 2 now shows a banner offering "Extract New Files Only" — only the new files are sent to OCR and the results are merged with already-extracted invoices.',
+    ]
+  },
   {
     version:'2.5.9',
     date:'2026-05-29',
