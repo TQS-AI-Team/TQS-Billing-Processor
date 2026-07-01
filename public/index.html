@@ -566,36 +566,110 @@
   </div>
 
   <div class="card">
-    <div class="ch"><div class="cn">2</div><div class="ct">Upload Files</div><div class="cd">All four files: same XLSX export shape · same as Items A/B</div></div>
+    <div class="ch"><div class="cn">2</div><div class="ct">Upload Files</div><div class="cd">All four files, placed on the billing timeline · each bar covers the span it bills</div></div>
     <div class="cb">
-      <div class="ug" style="grid-template-columns:repeat(2,1fr);gap:10px">
-        <label class="us" id="rsl-new" ondragover="rdv(event,'new')" ondragleave="rdl('new')" ondrop="rdd(event,'new')">
-          <div class="sl">1 · NEW PRE-BILL</div>
-          <div class="si">📄</div>
-          <div class="sno" id="rsn-new">Upcoming month\'s pre-bill (the file we augment + export)</div>
-          <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'new')"/>
-        </label>
-        <label class="us" id="rsl-adjustmentReport" ondragover="rdv(event,'adjustmentReport')" ondragleave="rdl('adjustmentReport')" ondrop="rdd(event,'adjustmentReport')">
-          <div class="sl">3 · ADJUSTMENT REPORT</div>
-          <div class="si">📋</div>
-          <div class="sno" id="rsn-adjustmentReport">Qnet\'s adjustment report — additional hours + weekend production for prior month</div>
-          <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'adjustmentReport')"/>
-        </label>
-        <label class="us" id="rsl-priorReDownload" ondragover="rdv(event,'priorReDownload')" ondragleave="rdl('priorReDownload')" ondrop="rdd(event,'priorReDownload')">
-          <div class="sl">2 · PRIOR PRE-BILL (re-downloaded today)</div>
-          <div class="si">🔄</div>
-          <div class="sno" id="rsn-priorReDownload">Prior month\'s pre-bill, freshly re-downloaded today (what billing should have been)</div>
-          <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'priorReDownload')"/>
-        </label>
-        <label class="us" id="rsl-priorOriginal" ondragover="rdv(event,'priorOriginal')" ondragleave="rdl('priorOriginal')" ondrop="rdd(event,'priorOriginal')">
-          <div class="sl">4 · PRIOR PRE-BILL (originally invoiced)</div>
-          <div class="si">📂</div>
-          <div class="sno" id="rsn-priorOriginal">Prior month\'s pre-bill from the start of the month (what was actually invoiced)</div>
-          <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'priorOriginal')"/>
-        </label>
-      </div>
-      <div style="font-size:11px;color:var(--t3);margin-top:10px;line-height:1.5">
-        File 3 (adjustment report) is the primary source for <b>additional hours + weekend production</b> (and any tax on them). Files 2 and 4 (re-run vs originally invoiced) are diffed to catch <b>contracted-unit and shutdown corrections</b> — a first-class primary source, shown as <b>Prior-period diff</b>. Any diff item that isn\'t a routine correction and isn\'t covered by file 3 is flagged <b>Missed by adjustment report</b> to verify in Qnet.
+      <style>
+      .rtl-board{overflow-x:auto;padding-bottom:4px}
+      .rtl-inner{min-width:700px}
+      .rtl-field{position:relative}
+      .rtl-axis{position:relative;height:42px;margin-bottom:2px}
+      .rtl-months{display:grid;grid-template-columns:1fr 1fr;height:100%;border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+      .rtl-mo{position:relative;display:flex;flex-direction:column;justify-content:center;padding:0 13px}
+      .rtl-mo.prior{background:var(--s2)}
+      .rtl-mo.up{background:var(--qnet-yellow-tint)}
+      .rtl-mo .nm{font-weight:700;font-size:13px;color:var(--text)}
+      .rtl-mo .tg{font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--t2)}
+      .rtl-mo.up .tg{color:var(--amber)}
+      .rtl-mo.prior::after{content:"";position:absolute;right:0;top:5px;bottom:5px;width:1px;background:var(--bd)}
+      .rtl-today{position:absolute;top:-3px;bottom:0;width:2px;background:var(--qnet-yellow);z-index:5}
+      .rtl-today::before{content:"TODAY";position:absolute;top:-15px;left:50%;transform:translateX(-50%);white-space:nowrap;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--qnet-on-yellow);background:var(--qnet-yellow);padding:1px 6px;border-radius:4px}
+      .rtl-lane{position:relative;height:64px;margin-top:10px}
+      .rtl-note{position:absolute;right:2px;top:-8px;font-family:var(--font-mono);font-size:9px;color:var(--t3);letter-spacing:.03em}
+      .rtl-bar{position:absolute;top:0;bottom:0;border:2px dashed var(--bd);border-radius:9px;background:#fff;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:8px 12px;cursor:pointer;transition:border-color .14s,background .14s,box-shadow .14s;overflow:hidden}
+      .rtl-bar:hover,.rtl-bar.dov{border-color:var(--qnet-yellow);background:var(--qnet-yellow-tint);box-shadow:var(--shadow)}
+      .rtl-bar input[type=file]{position:absolute;width:.1px;height:.1px;opacity:0;overflow:hidden}
+      .rtl-btop{display:flex;align-items:center;gap:8px}
+      .rtl-num{flex:none;width:19px;height:19px;border-radius:5px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10px;font-weight:700;color:#fff}
+      .rtl-title{font-size:12.5px;font-weight:700;letter-spacing:-.01em;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .rtl-cover{font-family:var(--font-mono);font-size:10px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .rtl-bar .sno,.rtl-bar .sok{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .rtl-bar[data-stream=cu] .rtl-num{background:var(--blue)}
+      .rtl-bar[data-stream=ah] .rtl-num{background:var(--green)}
+      .rtl-bar[data-stream=base] .rtl-num{background:var(--tqs-chrome)}
+      .rtl-bar.ld{border-style:solid}
+      .rtl-bar[data-stream=cu].ld{border-color:var(--blue);background:rgba(47,108,200,.06)}
+      .rtl-bar[data-stream=ah].ld{border-color:var(--green);background:rgba(42,140,90,.06)}
+      .rtl-bar[data-stream=base].ld{border-color:var(--qnet-yellow-hover);background:var(--qnet-yellow-tint)}
+      .rtl-brk{position:absolute;border:2px solid var(--blue);border-right:none;border-radius:7px 0 0 7px}
+      .rtl-brk-lbl{position:absolute;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--blue);background:rgba(47,108,200,.08);border:1px solid rgba(47,108,200,.28);padding:2px 7px;border-radius:5px;white-space:nowrap}
+      .rtl-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px;padding-top:12px;border-top:1px solid var(--s2)}
+      .rtl-lg{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--t2)}
+      .rtl-dot{width:10px;height:10px;border-radius:3px;flex:none}
+      @media (prefers-reduced-motion:reduce){.rtl-bar{transition:none}}
+      </style>
+      <div class="rtl">
+        <div class="rtl-board"><div class="rtl-inner">
+          <div class="rtl-field">
+            <div class="rtl-axis">
+              <div class="rtl-months">
+                <div class="rtl-mo prior"><span class="nm" id="rtlMoPrior">Prior month</span><span class="tg">Prior month · being reconciled</span></div>
+                <div class="rtl-mo up"><span class="nm" id="rtlMoUp">Upcoming month</span><span class="tg">Upcoming month · being billed</span></div>
+              </div>
+              <div class="rtl-today" style="left:51.5%"></div>
+            </div>
+
+            <div class="rtl-lane">
+              <span class="rtl-note" id="rtlNote-priorOriginal">invoiced start of prior month</span>
+              <label class="rtl-bar" data-stream="cu" id="rsl-priorOriginal" style="left:2%;width:46.5%" ondragover="rdv(event,'priorOriginal')" ondragleave="rdl('priorOriginal')" ondrop="rdd(event,'priorOriginal')">
+                <span class="rtl-btop"><span class="rtl-num">4</span><span class="rtl-title">Prior pre-bill · as invoiced</span></span>
+                <span class="rtl-cover" id="rtlCover-priorOriginal">covers the prior month · the bill that went out</span>
+                <span class="sno" id="rsn-priorOriginal">↑ click or drop the .xlsx</span>
+                <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'priorOriginal')"/>
+              </label>
+            </div>
+
+            <div class="rtl-lane">
+              <span class="rtl-note">re-run today</span>
+              <label class="rtl-bar" data-stream="cu" id="rsl-priorReDownload" style="left:2%;width:46.5%" ondragover="rdv(event,'priorReDownload')" ondragleave="rdl('priorReDownload')" ondrop="rdd(event,'priorReDownload')">
+                <span class="rtl-btop"><span class="rtl-num">2</span><span class="rtl-title">Prior pre-bill · re-run today</span></span>
+                <span class="rtl-cover" id="rtlCover-priorReDownload">covers the prior month · re-run with the month's updates</span>
+                <span class="sno" id="rsn-priorReDownload">↑ click or drop the .xlsx</span>
+                <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'priorReDownload')"/>
+              </label>
+              <div class="rtl-brk" style="top:-40px;height:82px;left:48.7%;width:12px"></div>
+              <div class="rtl-brk-lbl" style="top:-6px;left:50.4%">compare ②vs④ → contracted units &amp; shutdowns</div>
+            </div>
+
+            <div class="rtl-lane" style="margin-top:30px">
+              <span class="rtl-note">pulled today</span>
+              <label class="rtl-bar" data-stream="ah" id="rsl-adjustmentReport" style="left:2%;width:46.5%" ondragover="rdv(event,'adjustmentReport')" ondragleave="rdl('adjustmentReport')" ondrop="rdd(event,'adjustmentReport')">
+                <span class="rtl-btop"><span class="rtl-num">3</span><span class="rtl-title">Additional hours &amp; weekend production</span></span>
+                <span class="rtl-cover" id="rtlCover-adjustmentReport">covers prior-month activity · not billed yet</span>
+                <span class="sno" id="rsn-adjustmentReport">↑ click or drop the .xlsx</span>
+                <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'adjustmentReport')"/>
+              </label>
+            </div>
+
+            <div class="rtl-lane">
+              <span class="rtl-note">pulled today</span>
+              <label class="rtl-bar" data-stream="base" id="rsl-new" style="left:51.5%;width:46.5%" ondragover="rdv(event,'new')" ondragleave="rdl('new')" ondrop="rdd(event,'new')">
+                <span class="rtl-btop"><span class="rtl-num">1</span><span class="rtl-title">Upcoming pre-bill · the base</span></span>
+                <span class="rtl-cover" id="rtlCover-newPreBill">covers the upcoming month · everything above appends here</span>
+                <span class="sno" id="rsn-new">↑ click or drop the .xlsx</span>
+                <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'new')"/>
+              </label>
+            </div>
+          </div>
+
+          <div class="rtl-legend">
+            <span class="rtl-lg"><span class="rtl-dot" style="background:var(--blue)"></span>Contracted units &amp; shutdowns — from ②vs④</span>
+            <span class="rtl-lg"><span class="rtl-dot" style="background:var(--green)"></span>Additional hours &amp; weekend production — from ③</span>
+            <span class="rtl-lg"><span class="rtl-dot" style="background:var(--qnet-yellow)"></span>Upcoming pre-bill ① — the base everything merges into</span>
+          </div>
+        </div></div>
+        <div style="font-size:11px;color:var(--t3);margin-top:12px;line-height:1.5">
+          Each bar sits over the exact span it covers. <b>②vs④</b> (re-run vs originally invoiced) surfaces contracted-unit &amp; shutdown changes from the prior month; <b>③</b> adds additional hours &amp; weekend production never billed yet. Both are appended to <b>①</b>, the upcoming month's pre-bill — one invoice per customer.
+        </div>
       </div>
       <div id="rfsum" style="margin-top:12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--t2)"></div>
       <div class="btn-row" style="margin-top:14px" id="r2act">
@@ -911,8 +985,15 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.7.0';
+const APP_VERSION='2.8.0';
 const CHANGELOG=[
+  {
+    version:'2.8.0',
+    date:'2026-07-01',
+    changes:[
+      '<b>Pre-Bill Reconciliation upload step is now a billing timeline.</b> The four files sit on a prior-month → upcoming-month axis, each bar drawn over the exact span it covers, so it\'s clear at a glance what each report is for: ④ prior pre-bill as invoiced and ② the re-run (bracketed as the <i>②vs④</i> comparison → contracted-unit &amp; shutdown changes), ③ additional hours &amp; weekend production, and ① the upcoming pre-bill everything appends to. Month headers, coverage spans, and the "invoiced …" note relabel automatically from the Step 1 period dates. Drag-and-drop and click-to-upload both still work.',
+    ]
+  },
   {
     version:'2.7.0',
     date:'2026-07-01',
@@ -2947,6 +3028,7 @@ function switchTab(name){
     if(btn)btn.classList.toggle('active',t===name);
   });
   if(_TAB_SLUG[name]) history.replaceState(null,'','#'+_TAB_SLUG[name]);
+  if(name==='Recon') renderReconTimeline();
 }
 
 // Reconciliation period auto-fill: when the user picks the new pre-bill
@@ -2983,7 +3065,32 @@ function onReconNewStartChange(){
   onReconPeriodChange();
 }
 function isoLocal(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-function onReconPeriodChange(){checkReconReadiness();}
+function onReconPeriodChange(){checkReconReadiness();renderReconTimeline();}
+
+// Relabels the upload timeline (Step 2) from the period inputs (Step 1) so the
+// month headers, coverage spans, and the "invoiced ..." note reflect whatever
+// prior/upcoming months the user picked. Safe to call before the markup exists.
+const _RTL_MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _rtlMon(v){if(!v)return null;const d=new Date(v);return isNaN(d)?null:_RTL_MON[d.getUTCMonth()];}
+function _rtlDay(v){if(!v)return'';const d=new Date(v);return isNaN(d)?'':d.getUTCDate();}
+function renderReconTimeline(){
+  const psEl=document.getElementById('rPriorStart');
+  if(!psEl||!document.getElementById('rtlMoPrior'))return; // markup not present yet
+  const ps=psEl.value,pe=(document.getElementById('rPriorEnd')||{}).value,
+        ns=(document.getElementById('rNewStart')||{}).value,ne=(document.getElementById('rNewEnd')||{}).value;
+  const pMo=_rtlMon(ps),upMo=_rtlMon(ns);
+  const set=(id,t)=>{const el=document.getElementById(id);if(el)el.textContent=t;};
+  const span=(mo,d1,d2)=>mo?`${mo} ${d1||1}${d2?'–'+d2:''}`:null;
+  const pSpan=span(pMo,_rtlDay(ps),_rtlDay(pe))||'the prior month';
+  const upSpan=span(upMo,_rtlDay(ns),_rtlDay(ne))||'the upcoming month';
+  set('rtlMoPrior',pMo||'Prior month');
+  set('rtlMoUp',upMo||'Upcoming month');
+  set('rtlCover-priorOriginal',`covers ${pSpan} · the bill that went out`);
+  set('rtlCover-priorReDownload',`covers ${pSpan} · re-run with the month's updates`);
+  set('rtlCover-adjustmentReport',`covers ${pMo?pMo+' ':''}activity · not billed yet`);
+  set('rtlCover-newPreBill',`covers ${upSpan} · everything above appends here`);
+  set('rtlNote-priorOriginal',pMo?`invoiced ${pMo} 1`:'invoiced start of prior month');
+}
 
 // Reconciliation status bar (mirrors setDBStatus shape)
 function setReconDBStatus(type,text){
@@ -4305,6 +4412,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 
   checkReadiness();
   checkConfluenceRules();
+  renderReconTimeline();
   // Pre-load DB with the cycle dates so it's ready when Analyze is clicked
   if(cycle.cycleStart&&cycle.cycleEnd) loadDBData(cycle.cycleStart,cycle.cycleEnd);
 
