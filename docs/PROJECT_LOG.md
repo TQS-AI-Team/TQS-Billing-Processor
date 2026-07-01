@@ -14,6 +14,7 @@ When starting a new session, prompt with: *"Read `docs/PROJECT_LOG.md`, `docs/RO
 
 | Version | Date | Highlights | SHA |
 |---|---|---|---|
+| v2.7.0 | 2026-07-01 | **Recon model correction.** Adjustment report (file 3) confirmed by Lucas to carry **AH + WP only** (plus maybe HST on those). So contracted-unit / shutdown corrections now come from the #2-vs-#4 diff as a **first-class primary source** (`source:'prior-period-diff'`, green badge), not the amber "⚠ Missed by AR" anomaly path. Only unexpected items (AH/WP the AR should have carried, unknown ITEMIDs) still flag as missed-by-AR. Also fixed **HST/VAT netting collision**: tax (1053/1047) is keyed only by ITEMID, so AR tax (on AH/WP) and the diff tax delta (on CU/shutdown base) collapsed onto one key and were subtracted — now tax is never netted between AR and diff. `findMissedByAdjustmentReport`→`diffToRetros`. | _pending push_ |
 | v2.6.2 | 2026-06-01 | Add `.gitignore` for `node_modules/` and `package-lock.json` (artifacts from a local `npm install`; never tracked in this repo). | `cdf6acd` |
 | v2.6.1 | 2026-06-01 | Strip trailing `MANIPULATED` from uploaded `.xlsx` name (fixes doubled `_MANIPULATED_MANIPULATED.csv` that pushed SharePoint paths past Windows' 260-char `MAX_PATH`, blocking Excel open). SP upload now surfaces Graph errors via per-file alert + progress bar from `☁ SP` (not just "Upload all"). Bump `APP_VERSION` to 2.6.0. | `88e8c51` |
 | v2.6.0 | 2026-05-29 | Bump `APP_VERSION` to 2.5.9 in `index.html`; add v2.5.9 changelog entry. | `8859b7e` |

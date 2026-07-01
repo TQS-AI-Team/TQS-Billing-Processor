@@ -578,7 +578,7 @@
         <label class="us" id="rsl-adjustmentReport" ondragover="rdv(event,'adjustmentReport')" ondragleave="rdl('adjustmentReport')" ondrop="rdd(event,'adjustmentReport')">
           <div class="sl">3 · ADJUSTMENT REPORT</div>
           <div class="si">📋</div>
-          <div class="sno" id="rsn-adjustmentReport">Qnet\'s pre-billing adjustment report for prior month (primary retro source)</div>
+          <div class="sno" id="rsn-adjustmentReport">Qnet\'s adjustment report — additional hours + weekend production for prior month</div>
           <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'adjustmentReport')"/>
         </label>
         <label class="us" id="rsl-priorReDownload" ondragover="rdv(event,'priorReDownload')" ondragleave="rdl('priorReDownload')" ondrop="rdd(event,'priorReDownload')">
@@ -595,7 +595,7 @@
         </label>
       </div>
       <div style="font-size:11px;color:var(--t3);margin-top:10px;line-height:1.5">
-        File 3 is the primary retro source. Files 2 and 4 are diffed against each other and any item not covered by file 3 is surfaced as a <b>Missed by adjustment report</b> retro — a safety net in case Qnet\'s adjustment report misses anything (commonly: shutdown / contracted-units edge cases).
+        File 3 (adjustment report) is the primary source for <b>additional hours + weekend production</b> (and any tax on them). Files 2 and 4 (re-run vs originally invoiced) are diffed to catch <b>contracted-unit and shutdown corrections</b> — a first-class primary source, shown as <b>Prior-period diff</b>. Any diff item that isn\'t a routine correction and isn\'t covered by file 3 is flagged <b>Missed by adjustment report</b> to verify in Qnet.
       </div>
       <div id="rfsum" style="margin-top:12px;font-family:'DM Mono',monospace;font-size:11px;color:var(--t2)"></div>
       <div class="btn-row" style="margin-top:14px" id="r2act">
@@ -911,8 +911,16 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.6.0';
+const APP_VERSION='2.7.0';
 const CHANGELOG=[
+  {
+    version:'2.7.0',
+    date:'2026-07-01',
+    changes:[
+      '<b>Pre-Bill Reconciliation — contracted-unit & shutdown corrections are now a first-class source.</b> The adjustment report (file 3) only carries additional hours + weekend production, so contracted-unit and shutdown changes come from diffing the re-run pre-bill (file 2) against the originally-invoiced pre-bill (file 4). Those now surface with a green <i>"PRIOR-PERIOD DIFF · #2 vs #4"</i> badge and a clean MEMO instead of being flagged as anomalies. Only genuinely-unexpected items (an AH/WP the adjustment report should have carried, or an unknown ITEMID) still show the amber <i>"⚠ MISSED BY AR — verify in Qnet"</i> badge.',
+      '<b>Fix HST/VAT netting collision.</b> Tax lines are keyed only by ITEMID (1053/1047), so the adjustment report\'s tax (on AH/WP) and the file 2-vs-4 tax delta (on contracted-unit / shutdown base changes) previously collapsed onto the same key and were subtracted from each other, producing a wrong tax retro. Tax is no longer netted between the adjustment report and the diff — each surfaces independently.',
+    ]
+  },
   {
     version:'2.6.0',
     date:'2026-06-01',
@@ -3291,31 +3299,57 @@ function computePriorPeriodDiff(reTotals,origTotals){
   return diff;
 }
 
-// For each diff entry, check if the AR has matching rows that net out to the
-// same delta (within $0.01). Anything not covered is "missed by AR" and gets
-// surfaced as a retro the reviewer can accept.
-function findMissedByAdjustmentReport(diff,arRows,priorOriginalWB){
-  const missed=[];
-  // Build AR totals per (cust × SA × ITEMID)
+// Tax ITEMIDs. Tax lines are keyed only by ITEMID (1053 HST / 1047 VAT), not by
+// what they tax — so the adjustment report's tax (on AH/WP) and the #2-vs-#4 tax
+// delta (on contracted-units / shutdown base changes) collapse onto the same
+// (cust × SA × ITEMID) key. Netting them subtracts two unrelated amounts, so we
+// NEVER net tax between the AR and the diff: each surfaces on its own.
+const RECON_TAX_ITEMIDS=['1053','1047'];
+// Retro types the actual-invoiced (#4) vs re-run (#2) diff is *expected* to
+// catch. Contracted units + shutdowns are the whole point of comparing those
+// two files, so these are a first-class PRIMARY source — not an anomaly. The
+// adjustment report only carries additional hours / weekend production (and any
+// tax on them), so a contracted-unit / shutdown / tax delta showing up here is
+// routine. Only genuinely-unexpected items (an AH/WP the AR should have carried,
+// or an unknown ITEMID) are flagged "missed by adjustment report".
+const RECON_DIFF_PRIMARY_TYPES=new Set(['contracted-units','shutdown-credit','monthly-pricing','flat-rate','hst','vat']);
+
+// Turns the #2-vs-#4 diff into retro entries. Contracted-unit / shutdown / tax
+// deltas become first-class "prior-period diff" retros; anything the adjustment
+// report was supposed to cover but didn't is flagged "missed by adjustment
+// report" for the reviewer to verify in Qnet.
+function diffToRetros(diff,arRows){
+  const out=[];
+  // Build AR totals per (cust × SA × ITEMID) for coverage netting (non-tax only).
   const arTotals={};
   arRows.forEach(r=>{
     const k=r.custId+'|'+r.sa+'|'+r.itemId;
     arTotals[k]=(arTotals[k]||0)+r.retroAmount;
   });
   diff.forEach(d=>{
+    const isTax=RECON_TAX_ITEMIDS.includes(String(d.itemId).trim());
     const k=d.custId+'|'+d.sa+'|'+d.itemId;
-    const arNet=r2(arTotals[k]||0);
-    if(Math.abs(arNet-d.delta)<0.01)return; // covered by AR
-    // Not covered: surface the gap.
+    // Tax is never netted against the AR (see RECON_TAX_ITEMIDS note above).
+    const arNet=isTax?0:r2(arTotals[k]||0);
+    if(Math.abs(arNet-d.delta)<0.01)return; // fully covered by the adjustment report
     const gap=r2(d.delta-arNet);
     const desc=(d.reSampleRow&&d.reSampleRow.desc)||(d.origSampleRow&&d.origSampleRow.desc)||'';
     const memo=(d.reSampleRow&&d.reSampleRow.memo)||(d.origSampleRow&&d.origSampleRow.memo)||'';
     const currency=(d.reSampleRow&&d.reSampleRow.currency)||(d.origSampleRow&&d.origSampleRow.currency)||'';
     const lineDate=(d.reSampleRow&&d.reSampleRow.lineDate)||(d.origSampleRow&&d.origSampleRow.lineDate)||'';
     const sheet=d.sheet;
-    missed.push({
-      id:'retro-missed-'+(++cid),custId:d.custId,sa:d.sa,
-      type:itemIdToRetroType(d.itemId,desc),
+    const type=itemIdToRetroType(d.itemId,desc);
+    const label=itemIdToRetroLabel(d.itemId,desc);
+    const isPrimaryDiff=RECON_DIFF_PRIMARY_TYPES.has(type);
+    const memoSummary=isPrimaryDiff
+      ? `${label} correction (re-run vs originally invoiced)`
+      : `Missed by adjustment report — ${label}`;
+    const calc=isTax
+      ? `Re-run #2 tax $${d.reAmount} − invoiced #4 tax $${d.origAmount} = $${d.delta} (tax not netted vs adjustment report)`
+      : `Re-run #2 $${d.reAmount} − invoiced #4 $${d.origAmount} = $${d.delta}${arNet?`; adjustment report covers $${arNet}; gap $${gap}`:''}`;
+    out.push({
+      id:'retro-diff-'+(++cid),custId:d.custId,sa:d.sa,
+      type,
       itemId:d.itemId,
       billed:d.origAmount,expected:d.reAmount,retroAmount:gap,
       decision:null,fixedAmount:null,
@@ -3324,13 +3358,14 @@ function findMissedByAdjustmentReport(diff,arRows,priorOriginalWB){
       billedRowCount:0,billedSheet:sheet,
       billedRowsDetail:[],
       sampleCurrency:currency,sampleLineDateRaw:lineDate,
-      memoSummary:`Missed by AR — diff between prior re-download (#2) and original (#4) is $${gap}, AR covers $${arNet}`,
-      desc:itemIdToRetroLabel(d.itemId,desc),
-      calc:`File #2 total $${d.reAmount} − File #4 total $${d.origAmount} = $${d.delta}; AR covers $${arNet}; gap $${gap}`,
-      note:'Adjustment report did not include this delta. Verify in Qnet.'
+      memoSummary,
+      desc:label,
+      calc,
+      note:isPrimaryDiff?'':'Not covered by the adjustment report. Verify in Qnet.',
+      source:isPrimaryDiff?'prior-period-diff':'missed-by-ar'
     });
   });
-  return missed;
+  return out;
 }
 
 async function reconcile(){
@@ -3345,15 +3380,19 @@ async function reconcile(){
   const reTotals=parsePerCustSAItemTotals(RECON.priorReDownload.wb);
   const origTotals=parsePerCustSAItemTotals(RECON.priorOriginal.wb);
   const diffTotals=computePriorPeriodDiff(reTotals,origTotals);
-  // 3. Match each diff entry against the AR. Anything unmatched is "missed".
-  const missedRows=findMissedByAdjustmentReport(diffTotals,arRows,RECON.priorOriginal.wb);
-  // 4. Combine into a single review list.
+  // 3. Turn the diff into retros: contracted-unit / shutdown / tax corrections
+  //    (primary), plus anything the adjustment report should have covered but
+  //    didn't (flagged for verification).
+  const diffRows=diffToRetros(diffTotals,arRows);
+  // 4. Combine into a single review list. diffRows already carry their own
+  //    source ('prior-period-diff' or 'missed-by-ar'); don't override it.
   RECON.retroAdjustments=[
     ...arRows.map(r=>({...r,source:'adjustment-report'})),
-    ...missedRows.map(r=>({...r,source:'missed-by-ar'}))
+    ...diffRows
   ];
-  // Fill in matchCount as how many (cust × SA × ITEMID) keys diffed but were already in the AR.
-  RECON.matchCount=Object.keys(diffTotals).length-missedRows.length;
+  // Auto-matched = (cust × SA × ITEMID) keys that diffed but were already covered
+  // by the adjustment report (so no retro was surfaced).
+  RECON.matchCount=Object.keys(diffTotals).length-diffRows.length;
   // For backward compat with renderReconStep3's customer-count banner:
   const custCount=new Set(RECON.retroAdjustments.map(r=>r.custId)).size;
 
@@ -3956,7 +3995,9 @@ function renderReconStep3(custCount){
             ? '<span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(184,122,0,.15);color:var(--amber)">⚠ MISSED BY AR</span>'
             : a.source==='adjustment-report'
               ? '<span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(47,108,200,.12);color:var(--blue)">ADJUSTMENT REPORT</span>'
-              : '';
+              : a.source==='prior-period-diff'
+                ? '<span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(43,138,62,.15);color:var(--green)">PRIOR-PERIOD DIFF · #2 vs #4</span>'
+                : '';
           return`<div class="chrow" id="rac-${a.id}">
             <div class="cc" style="flex-direction:column;align-items:flex-start;gap:2px">
               <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--red)">${a.custId}</span>
