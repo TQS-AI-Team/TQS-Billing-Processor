@@ -583,9 +583,9 @@
       .rtl-mo.prior::after{content:"";position:absolute;right:0;top:5px;bottom:5px;width:1px;background:var(--bd)}
       .rtl-today{position:absolute;top:-3px;bottom:0;width:2px;background:var(--qnet-yellow);z-index:5}
       .rtl-today::before{content:"TODAY";position:absolute;top:-15px;left:50%;transform:translateX(-50%);white-space:nowrap;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--qnet-on-yellow);background:var(--qnet-yellow);padding:1px 6px;border-radius:4px}
-      .rtl-lane{position:relative;height:64px;margin-top:10px}
-      .rtl-note{position:absolute;right:2px;top:-8px;font-family:var(--font-mono);font-size:9px;color:var(--t3);letter-spacing:.03em}
-      .rtl-bar{position:absolute;top:0;bottom:0;border:2px dashed var(--bd);border-radius:9px;background:#fff;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:8px 12px;cursor:pointer;transition:border-color .14s,background .14s,box-shadow .14s;overflow:hidden}
+      .rtl-lane{position:relative;height:80px;margin-top:10px}
+      .rtl-note{position:absolute;right:2px;top:-8px;font-family:var(--font-mono);font-size:9px;color:var(--t3);letter-spacing:.03em;text-transform:none}
+      .rtl-bar{position:absolute;top:0;bottom:0;border:2px dashed var(--bd);border-radius:9px;background:#fff;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:10px 13px;margin:0;cursor:pointer;transition:border-color .14s,background .14s,box-shadow .14s;overflow:hidden;text-transform:none;letter-spacing:normal;font-weight:400;color:var(--text)}
       .rtl-bar:hover,.rtl-bar.dov{border-color:var(--qnet-yellow);background:var(--qnet-yellow-tint);box-shadow:var(--shadow)}
       .rtl-bar input[type=file]{position:absolute;width:.1px;height:.1px;opacity:0;overflow:hidden}
       .rtl-btop{display:flex;align-items:center;gap:8px}
@@ -636,8 +636,8 @@
                 <span class="sno" id="rsn-priorReDownload">↑ click or drop the .xlsx</span>
                 <input type="file" accept=".xlsx,.xls" onchange="rlf(event.target.files[0],'priorReDownload')"/>
               </label>
-              <div class="rtl-brk" style="top:-40px;height:82px;left:48.7%;width:12px"></div>
-              <div class="rtl-brk-lbl" style="top:-6px;left:50.4%">compare ②vs④ → contracted units &amp; shutdowns</div>
+              <div class="rtl-brk" style="top:-50px;height:90px;left:48.7%;width:12px"></div>
+              <div class="rtl-brk-lbl" style="top:-9px;left:50.4%">compare ②vs④ → contracted units &amp; shutdowns</div>
             </div>
 
             <div class="rtl-lane" style="margin-top:30px">
@@ -985,8 +985,15 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.8.0';
+const APP_VERSION='2.8.1';
 const CHANGELOG=[
+  {
+    version:'2.8.1',
+    date:'2026-07-01',
+    changes:[
+      'Fix the reconciliation upload timeline rendering — the file bars are <code>&lt;label&gt;</code> elements and were inheriting the global uppercase/letter-spacing label style, which forced the bar text to ALL CAPS and, combined with too-short bars, clipped the bottom line. Bars now render in normal case at a readable height with all three lines visible.',
+    ]
+  },
   {
     version:'2.8.0',
     date:'2026-07-01',
