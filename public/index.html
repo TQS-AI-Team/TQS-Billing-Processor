@@ -981,8 +981,15 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.8.4';
+const APP_VERSION='2.8.5';
 const CHANGELOG=[
+  {
+    version:'2.8.5',
+    date:'2026-07-01',
+    changes:[
+      '<b>Pre-Bill Reconciliation now stamps the Invoice Date &amp; GL Posting Date you entered onto every invoice.</b> The augmented pre-bill CSV was carrying over whatever dates the new pre-bill file was exported with (Qnet stamps the period-start dates — e.g. 6/29 &amp; 6/30), so the accountant had to hand-correct the invoice and GL date on every invoice after downloading. The reconcile step now overwrites the <code>DATE</code> and <code>GLPOSTINGDATE</code> on each carried-over invoice header row with the values from the <i>Invoice Date</i> and <i>GL Posting Date</i> fields in Step 1 — matching what already happened for standalone retro-only blocks. Continuation / line rows keep their blank date.',
+    ]
+  },
   {
     version:'2.8.4',
     date:'2026-07-01',
@@ -4328,6 +4335,9 @@ function reconcileGenerate(){
   const newGL=document.getElementById('rNewGL').value;
   const priorStart=document.getElementById('rPriorStart').value;
   const periodLabel=formatRetroPeriod(priorStart);
+  // Invoice Date / GL Posting Date the accountant entered in Step 1 (top of the
+  // screen). These stamp onto the carried-over invoices below — see stampDates.
+  const invStamp=fmt(newInv),glStamp=fmt(newGL);
   const accepted=RECON.retroAdjustments.filter(a=>a.decision==='accept'||a.decision==='fix');
 
   // Group accepted retros by customer
@@ -4344,6 +4354,21 @@ function reconcileGenerate(){
     const hdr=rows[0];
     const ci=(n)=>ciFind(hdr,n);
     const cF=ci('CUSTOMER_ID'),cLine=ci('LINE'),cDate=ci('DATE'),cGL=ci('GLPOSTINGDATE'),cState=ci('STATE'),cTxn=ci('TRANSACTIONTYPE');
+
+    // Overwrite the invoice + GL dates the new pre-bill file was exported with
+    // (Qnet stamps the period-start dates) using what the accountant entered in
+    // Step 1. Only rows that carry a DATE are invoice header rows; continuation
+    // / line rows keep their blank date. Returns a clone so the source `rows`
+    // array is never mutated. Without this the augmented CSV kept 6/29 · 6/30
+    // and the dates had to be corrected by hand.
+    const stampDates=(row)=>{
+      const r=[...row];
+      if(cDate!==-1&&r[cDate]!==''&&r[cDate]!=null){
+        if(invStamp)r[cDate]=invStamp;
+        if(cGL!==-1&&glStamp)r[cGL]=glStamp;
+      }
+      return r;
+    };
 
     // Pass 1: identify customer blocks
     const blocks=[];let curBlock=null,curCust='';
@@ -4362,7 +4387,7 @@ function reconcileGenerate(){
     const handled=new Set();
     const final=[hdr];let lastEmitted=0;
     blocks.forEach(block=>{
-      for(let i=Math.max(1,lastEmitted+1);i<=block.endIdx;i++)final.push(rows[i]);
+      for(let i=Math.max(1,lastEmitted+1);i<=block.endIdx;i++)final.push(stampDates(rows[i]));
       lastEmitted=block.endIdx;
       const retros=retrosByCust[block.cust];
       if(retros&&retros.length){
@@ -4372,7 +4397,7 @@ function reconcileGenerate(){
         RECON.log.push(`${sName} · ${block.cust}: ${retros.length} retro row${retros.length!==1?'s':''} appended`);
       }
     });
-    for(let i=lastEmitted+1;i<rows.length;i++)final.push(rows[i]);
+    for(let i=lastEmitted+1;i<rows.length;i++)final.push(stampDates(rows[i]));
 
     // Standalone blocks for customers with retros but no presence in this sheet
     Object.entries(retrosByCust).forEach(([cust,retros])=>{
