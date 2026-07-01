@@ -981,8 +981,15 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.8.2';
+const APP_VERSION='2.8.4';
 const CHANGELOG=[
+  {
+    version:'2.8.4',
+    date:'2026-07-01',
+    changes:[
+      '<b>Retro rows now bill units × rate, not a flat bulk amount.</b> An appended contracted-units / additional-hours / weekend-production retro is written with the real <code>QUANTITY</code> and per-unit <code>PRICE</code> pulled from the pre-bill\'s own line rate — e.g. a $1,170 contracted-units change now appends as <code>20 × $58.50</code> instead of <code>1 × $1,170</code>. Applies to both adjustment-report rows (which carry their own qty × rate) and prior-period-diff rows (net quantity change × the agreement rate). If the change isn\'t a clean quantity change at a single rate — mixed rates, or a manually-<i>Fixed</i> amount — it safely falls back to <code>1 × full amount</code> so the row total is always exactly the retro amount.',
+    ]
+  },
   {
     version:'2.8.2',
     date:'2026-07-01',
@@ -3314,12 +3321,15 @@ function parseAdjustmentReportRows(wb){
       const lineDate=cLineDate!==-1?row[cLineDate]:'';
       const currency=cCurr!==-1?String(row[cCurr]||''):'';
       // Per item-id: amount = price for non-1001/1002/1003, qty*price for those.
-      const lineAmount=['1001','1002','1003'].includes(itemId)?qty*price:price;
+      const isUnitItem=['1001','1002','1003'].includes(itemId);
+      const lineAmount=isUnitItem?qty*price:price;
       out.push({
         id:'retro-ar-'+(++cid),custId:cust,sa,
         type:itemIdToRetroType(itemId,desc),
         itemId,
         billed:0,expected:r2(lineAmount),retroAmount:r2(lineAmount),
+        // Unit-priced AR rows carry their own qty × rate, so append them that way.
+        retroQty:isUnitItem?qty:null,retroPrice:isUnitItem?price:null,
         decision:null,fixedAmount:null,
         agreement:null,agreementNumber:'',priceType:'',
         originalMemo:memo,sampleMemo:memo,originalDesc:desc,
@@ -3388,11 +3398,19 @@ function parsePerCustSAItemTotals(wb){
       if(!cust||!sa||!itemId)return;
       const qty=parseFloat(row[cQ])||0;
       const price=parseFloat(row[cP])||0;
-      const lineAmount=['1001','1002','1003'].includes(itemId)?qty*price:price;
+      const isUnitItem=['1001','1002','1003'].includes(itemId);
+      const lineAmount=isUnitItem?qty*price:price;
       totals[cust]=totals[cust]||{};
       totals[cust][sa]=totals[cust][sa]||{};
-      const t=totals[cust][sa][itemId]=totals[cust][sa][itemId]||{amount:0,count:0,sampleRow:null,sampleSheet:sName};
+      const t=totals[cust][sa][itemId]=totals[cust][sa][itemId]||{amount:0,count:0,qty:0,rate:null,rateMixed:false,sampleRow:null,sampleSheet:sName};
       t.amount+=lineAmount;t.count++;
+      // For unit-priced items (contracted units / additional hours / weekend
+      // production) track the total quantity and the per-unit bill rate, so a
+      // retro can be written as units × rate rather than a single bulk amount.
+      if(isUnitItem){
+        t.qty+=qty;
+        if(price){const pr=r2(price);if(t.rate===null)t.rate=pr;else if(Math.abs(t.rate-pr)>0.0001)t.rateMixed=true;}
+      }
       if(!t.sampleRow){
         const desc=cDesc!==-1?String(row[cDesc]||''):'';
         const memo=cMemo!==-1?String(row[cMemo]||''):'';
@@ -3415,13 +3433,20 @@ function computePriorPeriodDiff(reTotals,origTotals){
   Object.entries(origTotals).forEach(([c,sas])=>Object.entries(sas).forEach(([sa,items])=>Object.keys(items).forEach(item=>allKeys.add(c+'|'+sa+'|'+item))));
   allKeys.forEach(k=>{
     const[cust,sa,itemId]=k.split('|');
-    const re=((reTotals[cust]||{})[sa]||{})[itemId]||{amount:0,count:0,sampleRow:null};
-    const orig=((origTotals[cust]||{})[sa]||{})[itemId]||{amount:0,count:0,sampleRow:null};
+    const re=((reTotals[cust]||{})[sa]||{})[itemId]||{amount:0,count:0,qty:0,rate:null,rateMixed:false,sampleRow:null};
+    const orig=((origTotals[cust]||{})[sa]||{})[itemId]||{amount:0,count:0,qty:0,rate:null,rateMixed:false,sampleRow:null};
     const delta=r2(re.amount-orig.amount);
     if(Math.abs(delta)<0.01)return;
+    // Net quantity change and the per-unit rate (prefer the re-run's current
+    // rate; fall back to the invoiced rate; null if the rate isn't uniform).
+    const deltaQty=r2((re.qty||0)-(orig.qty||0));
+    let rate=null;
+    if(re.rate!=null&&!re.rateMixed)rate=re.rate;
+    else if(orig.rate!=null&&!orig.rateMixed)rate=orig.rate;
     diff.push({
       custId:cust,sa,itemId,
       reAmount:r2(re.amount),origAmount:r2(orig.amount),delta,
+      deltaQty,rate,
       reSampleRow:re.sampleRow,origSampleRow:orig.sampleRow,
       sheet:(re.sampleRow&&re.sampleRow.sheet)||(orig.sampleRow&&orig.sampleRow.sheet)||''
     });
@@ -3474,14 +3499,24 @@ function diffToRetros(diff,arRows){
     const memoSummary=isPrimaryDiff
       ? `${label} correction (re-run vs originally invoiced)`
       : `Missed by adjustment report — ${label}`;
-    const calc=isTax
+    // Express the retro as (net units × bill rate) when that reconciles to the
+    // gap being written (i.e. the change is a clean quantity change at a single
+    // rate). Otherwise leave the unit breakdown off and fall back to a bulk
+    // amount, so the appended row's total is always exactly the retro amount.
+    let retroQty=null,retroPrice=null;
+    if(d.rate&&d.deltaQty&&Math.abs(d.deltaQty*d.rate-gap)<0.01){
+      retroQty=d.deltaQty;retroPrice=d.rate;
+    }
+    let calc=isTax
       ? `Re-run #2 tax $${d.reAmount} − invoiced #4 tax $${d.origAmount} = $${d.delta} (tax not netted vs adjustment report)`
       : `Re-run #2 $${d.reAmount} − invoiced #4 $${d.origAmount} = $${d.delta}${arNet?`; adjustment report covers $${arNet}; gap $${gap}`:''}`;
+    if(retroPrice!=null)calc+=` · ${retroQty} × $${retroPrice}`;
     out.push({
       id:'retro-diff-'+(++cid),custId:d.custId,sa:d.sa,
       type,
       itemId:d.itemId,
       billed:d.origAmount,expected:d.reAmount,retroAmount:gap,
+      retroQty,retroPrice,
       decision:null,fixedAmount:null,
       agreement:null,agreementNumber:'',priceType:'',
       originalMemo:memo,sampleMemo:memo,originalDesc:desc,
@@ -4256,9 +4291,18 @@ function buildRetroRow(hdr,retro,periodLabel,line){
   const cCurr=ci('CURRENCY'),cLineDate=ci('SI_LINEITEM_DATE');
   if(cClass!==-1)r[cClass]=retro.sa;
   if(cI!==-1)r[cI]=retro.itemId;
-  if(cQ!==-1)r[cQ]=1;
   const amt=retro.decision==='fix'?retro.fixedAmount:retro.retroAmount;
-  if(cP!==-1)r[cP]=amt;
+  // Prefer the real unit breakdown (units × bill rate) so the appended row
+  // matches the agreement's rate instead of a single bulk line. Only when the
+  // amount wasn't manually overridden (Fix) and qty × price reconciles to the
+  // amount within a cent; otherwise fall back to qty 1 × full amount.
+  let outQty=1,outPrice=amt;
+  if(retro.decision!=='fix'&&retro.retroPrice!=null&&retro.retroQty!=null&&retro.retroQty!==0
+     &&Math.abs(retro.retroQty*retro.retroPrice-amt)<0.01){
+    outQty=retro.retroQty;outPrice=retro.retroPrice;
+  }
+  if(cQ!==-1)r[cQ]=outQty;
+  if(cP!==-1)r[cP]=outPrice;
   if(cDesc!==-1)r[cDesc]=`Retro: ${retro.desc} (${periodLabel})`;
   if(cCurr!==-1&&retro.sampleCurrency)r[cCurr]=retro.sampleCurrency;
   if(cLineDate!==-1&&retro.sampleLineDateRaw!=='')r[cLineDate]=retro.sampleLineDateRaw;
