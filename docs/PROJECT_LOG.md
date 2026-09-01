@@ -131,6 +131,31 @@ Standalone double-click HTML file — no server, no build tools.
 
 5. **Confluence updates** — once the recon flow ships fully, the end-of-period AH/WP recap is dead. Confluence pages 694386707 and 1627095047 need updating to reflect the new flow. Not a code task.
 
+### THIS ENGINE IS PORTED INTO tqs-accounting — FIX BOTH
+
+`public/index.html` is not the only copy. `tqs-accounting` serves the portal's
+`/billing` page (Month-End, Reconciliation, Bosch tabs) at
+`teamwork-accounting.teamqualityservices.com`, and
+`src/app/billing/month-end/engine.js` there is a **verbatim port of this file**,
+sliced and labeled by original line range. Its reconciliation engine is a
+verbatim port too, minus the DB-query path (`loadDBPrior`,
+`buildExpectedSnapshot`, `buildRetroAdjustments`), which was deliberately not
+ported.
+
+A billing-logic fix here is only half done until it is mirrored there. The
+portal copy is the one most people actually reach. As of v2.8.8 the
+`[shutdown-helpers]`, `[date-helpers]` and `[cycle-helpers]` slices in
+`tqs-accounting` are labeled as DIVERGING from the verbatim port and carry this
+repo's SHA; all nine shared date/billing functions are byte-identical across the
+two. Check that before shipping a change to either:
+
+```
+# from the parent of both checkouts — prints IDENTICAL / DIFFERS per function
+node -e '...'   # see the compare snippet in the v2.8.8 PR
+```
+
+Both repos carry the same `npm test` suite (`scripts/test-flat-rate-period.mjs`).
+
 ### Bug-watch / things to verify after each Lucas run
 
 - **Item D shutdown credits after v2.8.8** — verify on the next month-end run
