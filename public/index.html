@@ -982,8 +982,19 @@
 <script id="mainScript">
 // ── VERSION & CHANGELOG ──────────────────────────────────────────────────
 // Newest entries first. Bump APP_VERSION when shipping user-visible changes.
-const APP_VERSION='2.8.7';
+const APP_VERSION='2.8.8';
 const CHANGELOG=[
+  {
+    version:'2.8.8',
+    date:'2026-09-01',
+    changes:[
+      '<b>Fixed: flat-rate shutdown credits were being measured against the wrong billing period.</b> Monthly Pricing and Flat Rate (Item D) bill the <b>full calendar month</b> — the 1st through the last day — but every Item D check was measuring against the <i>contracted-units</i> cycle in Step 1 (Monday after the prior month\'s last Sunday → this month\'s last Sunday). That cycle opens in the PRIOR month: August 2026 runs 07-27 → 08-30. So a shutdown week of Mon 07-27 – Fri 07-31 — July time, already covered by July\'s invoice — was counted against August\'s flat rate, and the audit demanded a credit that did not belong there. Item D now measures shutdown credits, the 100%-full-month rule, and pro-ration against the calendar month. Contracted units (Items A/B/C) are unchanged and still follow the TQS billing calendar. Source: Confluence <i>Automated Representation Billing Processes by Agreement Price Type</i> — "Monthly and flat rate billing reports cover the full calendar month, from the 1st through the last day of the month."',
+      '<b>Fixed: week math was shifting a day in any timezone west of Greenwich.</b> Period dates were parsed as UTC midnight but read back with the browser\'s LOCAL day-of-week, so in Eastern time <code>2026-08-01</code> read as a Friday rather than a Saturday. That dropped a full shutdown week whose Friday landed on the last day of the month (the Hall 50 credit would have gone missing from July\'s invoice too) and invented one whose Monday sat the day before the period started. All billing date math now runs on calendar dates that mean the same day in every timezone.',
+      '<b>Fixed: Monthly Pricing and Flat Rate pro-ration used the wrong denominator.</b> It divided by the <i>Total Weekdays in Period</i> field, which counts the cycle\'s weekdays (25 for August 2026) instead of the billed month\'s (21) — understating every mid-month prorated amount by about 16%.',
+      '<b>Fixed:</b> a verified shutdown-credit row showed the literal text <code>${fullWeeks} wks × 20%</code> instead of the week count. Every shutdown-credit row now also names the month it was measured over, so the period behind the number is visible on the card.',
+      'Adds <code>npm test</code> — a regression suite that runs the shipped functions out of <code>index.html</code> across five timezones. Includes the August 2026 / Hall 50 case that prompted this fix.',
+    ]
+  },
   {
     version:'2.8.7',
     date:'2026-07-30',
@@ -1471,12 +1482,13 @@ function getApplicableShutdowns(sageLocCode,rangeStart,rangeEnd,psaAgreementNumb
   // psaAgreementNumber: optional — if provided, filter agreement-specific shutdowns to only this agreement
   // dbState: optional — defaults to global DB; pass DB_PRIOR for the reconciliation flow
   const db=dbState||DB;
-  const rs=new Date(rangeStart),re=new Date(rangeEnd);
+  const rs=cd(rangeStart),re=cd(rangeEnd);
+  if(!rs||!re)return [];
   const byId={};
   db.shutdownRows.forEach(sd=>{
     if(sd.sageLocationCode!==sageLocCode)return;
-    const ss=new Date(sd.startTime),se=new Date(sd.endTime);
-    if(ss>re||se<rs)return;
+    const ss=cd(sd.startTime),se=cd(sd.endTime);
+    if(!ss||!se||ss>re||se<rs)return;
     if(!byId[sd.id])byId[sd.id]={...sd,psaAgreementNumbers:new Set(),hasPSA:false};
     if(sd.psaId){byId[sd.id].hasPSA=true;if(sd.psaAgreementNumber)byId[sd.id].psaAgreementNumbers.add(sd.psaAgreementNumber);}
   });
@@ -1488,18 +1500,23 @@ function getApplicableShutdowns(sageLocCode,rangeStart,rangeEnd,psaAgreementNumb
   }).map(sd=>({...sd,scope:sd.hasPSA?'agreement-specific':'full-location'}));
 }
 
-// Count full Mon–Fri weeks covered by a set of shutdowns within pStart–pEnd
+// Count full Mon–Fri weeks covered by a set of shutdowns within pStart–pEnd.
+// A week counts only if the whole Mon–Fri span is shut down AND sits inside
+// the period — a week straddling the period boundary belongs to neither side.
+// For Item D pass the flatRateBillingMonth() window, not the pStart/pEnd cycle.
 function countFullShutdownWeeks(shutdowns,pStart,pEnd){
-  const ps=new Date(pStart),pe=new Date(pEnd);
+  const ps=cd(pStart),pe=cd(pEnd);
+  if(!ps||!pe)return 0;
   const fullWeekSet=new Set();
   shutdowns.forEach(sd=>{
-    const ss=new Date(sd.startTime),se=new Date(sd.endTime);
+    const ss=cd(sd.startTime),se=cd(sd.endTime);
+    if(!ss||!se)return;
     let mon=new Date(Math.max(ss,ps));
-    while(mon.getDay()!==1)mon.setDate(mon.getDate()-1);
+    while(cdDay(mon)!==1)mon=cdAdd(mon,-1);
     while(mon<=pe){
-      const fri=new Date(mon);fri.setDate(fri.getDate()+4);
-      if(ss<=mon&&se>=fri&&mon>=ps&&fri<=pe)fullWeekSet.add(mon.toISOString().slice(0,10));
-      mon.setDate(mon.getDate()+7);
+      const fri=cdAdd(mon,4);
+      if(ss<=mon&&se>=fri&&mon>=ps&&fri<=pe)fullWeekSet.add(cdISO(mon));
+      mon=cdAdd(mon,7);
     }
   });
   return fullWeekSet.size;
@@ -1545,6 +1562,54 @@ function setStep(n){
 }
 
 // ── DATE HELPERS ──────────────────────────────────────────────────────────
+
+// Calendar-date primitives. A billing date ("2026-08-31") is a plain calendar
+// day, not an instant — but new Date('2026-08-31') yields UTC midnight, and
+// reading that back with the LOCAL getters shifts it a day west of Greenwich:
+// in America/New_York new Date('2026-08-01').getDay() is Friday, not Saturday.
+// That is why a shutdown week could land in the wrong month. Every helper below
+// reads and writes UTC fields, so a calendar date means the same day in every
+// browser's timezone. Pass "YYYY-MM-DD" strings or dates built by cd().
+function cd(v){
+  if(v==null||v==='')return null;
+  if(v instanceof Date){
+    if(isNaN(v))return null;
+    return new Date(Date.UTC(v.getUTCFullYear(),v.getUTCMonth(),v.getUTCDate()));
+  }
+  const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m)return new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));
+  const d=new Date(v);
+  return isNaN(d)?null:new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));
+}
+const cdDay=(d)=>d.getUTCDay();                                    // 0=Sun … 6=Sat
+const cdAdd=(d,n)=>{const x=new Date(d);x.setUTCDate(x.getUTCDate()+n);return x};
+const cdISO=(d)=>d.toISOString().slice(0,10);
+const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// The billing window for Item D — Monthly Pricing and Flat Rate.
+//
+// Confluence "Automated Representation Billing Processes by Agreement Price
+// Type" (Finance & Accounting Playbook): "Monthly and flat rate billing reports
+// cover the full calendar month, from the 1st through the last day of the
+// month. Other billing/report types either use a single week or follow the TQS
+// billing calendar."
+//
+// So Item D is NOT on the pStart–pEnd cycle that Items A/B/C follow. That cycle
+// runs Mon-after-the-last-Sun-of-the-prior-month → last-Sun-of-this-month, so
+// its first week belongs to the PRIOR calendar month: August 2026 bills as
+// 07-27 → 08-30. Measuring flat-rate shutdown credits and pro-ration against it
+// charged August for a shutdown week that July's invoice already covered.
+//
+// The month being billed is the one containing the period END — the cycle
+// always ends on the last Sunday of it.
+function flatRateBillingMonth(pStart,pEnd){
+  const ref=cd(pEnd)||cd(pStart);
+  if(!ref)return null;
+  const y=ref.getUTCFullYear(),m=ref.getUTCMonth();
+  const start=new Date(Date.UTC(y,m,1)),end=new Date(Date.UTC(y,m+1,0));
+  return{start:cdISO(start),end:cdISO(end),weekdays:countWeekdays(start,end),
+    label:`${MONTH_NAMES[m]} ${y}`};
+}
 const fmt=(s)=>{if(!s)return null;const[y,m,d]=s.split('-');return`${m}/${d}/${y}`};
 const tod=()=>{const t=new Date();return`${String(t.getMonth()+1).padStart(2,'0')}/${String(t.getDate()).padStart(2,'0')}/${t.getFullYear()}`};
 const nm1=(s)=>{const b=new Date(s);b.setMonth(b.getMonth()+1);b.setDate(1);return`${String(b.getMonth()+1).padStart(2,'0')}/01/${b.getFullYear()}`};
@@ -1589,19 +1654,26 @@ function computeBillingCycle(today=new Date()){
   return{cycleStart:iso(cycleStart),cycleEnd:iso(cycleEnd),invoiceDefault:iso(invoiceDefault),weekdays};
 }
 function withinTol(b,c){if(c===0&&b===0)return true;if(c===0)return false;return Math.abs((b-c)/c)*100<=tol();}
-function countWeekdays(start,end){let d=new Date(start),count=0;const e=new Date(end);while(d<=e){const wd=d.getDay();if(wd!==0&&wd!==6)count++;d.setDate(d.getDate()+1);}return count;}
+function countWeekdays(start,end){
+  let d=cd(start);const e=cd(end);
+  if(!d||!e)return 0;
+  let count=0;
+  while(d<=e){const wd=cdDay(d);if(wd!==0&&wd!==6)count++;d=cdAdd(d,1);}
+  return count;
+}
 
 // Iterates Mon-Fri weeks intersecting [pStart, pEnd]. Each call to cb gets the
 // week's Mon date and Fri date (clamped to the period bounds).
 function forEachMonFriWeek(pStart,pEnd,cb){
-  const ps=new Date(pStart),pe=new Date(pEnd);
-  let mon=new Date(ps);while(mon.getDay()!==1)mon.setDate(mon.getDate()-1);
+  const ps=cd(pStart),pe=cd(pEnd);
+  if(!ps||!pe)return;
+  let mon=new Date(ps);while(cdDay(mon)!==1)mon=cdAdd(mon,-1);
   while(mon<=pe){
-    const fri=new Date(mon);fri.setDate(fri.getDate()+4);
+    const fri=cdAdd(mon,4);
     const wkStart=new Date(Math.max(mon,ps));
     const wkEnd=new Date(Math.min(fri,pe));
     if(wkStart<=wkEnd)cb(mon,fri,wkStart,wkEnd);
-    mon.setDate(mon.getDate()+7);
+    mon=cdAdd(mon,7);
   }
 }
 function formatRetroPeriod(priorStart){
@@ -1684,6 +1756,15 @@ function analyze(){
 }
 
 function _doAnalyze(pStart,pEnd){
+
+  // pStart–pEnd is the TQS billing calendar cycle, which Items A/B/C
+  // (contracted units) bill on. Item D — Monthly Pricing and Flat Rate — bills
+  // the full calendar month instead, so every Item D check below measures
+  // against FR_MONTH rather than the cycle. See flatRateBillingMonth().
+  // Analyze is gated on both dates being set, so this always resolves; the
+  // fallback just keeps a missing date from taking down the whole audit.
+  const FR_MONTH=flatRateBillingMonth(pStart,pEnd)
+    ||{start:pStart,end:pEnd,weekdays:countWeekdays(pStart,pEnd)||totalWD(),label:'the billing period'};
 
   // Cross-file invoice-row index for the agreement-coverage check.
   // Built during the row pass below; consumed after the four-file loop.
@@ -1863,17 +1944,23 @@ function _doAnalyze(pStart,pEnd){
                 ||agmts.sort((a,b)=>(b.startTime||'').localeCompare(a.startTime||''))[0];
             }
           if(agmt&&(agmt.startTime||agmt.expireTime)){
-            const aStart=agmt.startTime?new Date(agmt.startTime):new Date(pStart);
-            const aEnd=agmt.expireTime?new Date(agmt.expireTime):new Date(pEnd);
-            const activeStart=new Date(Math.max(aStart,new Date(pStart)));
-            const activeEnd=new Date(Math.min(aEnd,new Date(pEnd)));
+            // Monthly Pricing pro-rates over the CALENDAR MONTH: "divide the
+            // number of weekdays the agreement was active during the billing
+            // period by the total weekdays in that period". The totalWD field
+            // counts the cycle's weekdays (25 for Aug 2026), not the month's
+            // (21), so it is the wrong denominator for Item D.
+            const mStart=cd(FR_MONTH.start),mEnd=cd(FR_MONTH.end);
+            const aStart=agmt.startTime?cd(agmt.startTime):mStart;
+            const aEnd=agmt.expireTime?cd(agmt.expireTime):mEnd;
+            const activeStart=new Date(Math.max(aStart,mStart));
+            const activeEnd=new Date(Math.min(aEnd,mEnd));
             const activeWD=countWeekdays(activeStart,activeEnd);
             const monthlyRate=agmt.rate?parseFloat(agmt.rate):null;
-            const expectedPro=monthlyRate?r2((activeWD/totalWD())*monthlyRate):null;
+            const expectedPro=monthlyRate?r2((activeWD/FR_MONTH.weekdays)*monthlyRate):null;
             const sev=expectedPro!==null&&!withinTol(price,expectedPro)?'error':'flag';
             AUDIT.push({id:mkId(),type:'prorate',sev,fileKey:key,sheet:sName,custId:cId,sa:mr.sa,
               desc:'Monthly Pricing — pro-ration (DB verified)',
-              calc:expectedPro!==null?`Active WD: ${activeWD}/${totalWD()} · Rate $${monthlyRate} → $${expectedPro}`:`Active WD: ${activeWD}/${totalWD()} · Start: ${agmt.startTime||'–'} End: ${agmt.expireTime||'–'}`,
+              calc:expectedPro!==null?`${FR_MONTH.label} · Active WD: ${activeWD}/${FR_MONTH.weekdays} · Rate $${monthlyRate} → $${expectedPro}`:`${FR_MONTH.label} · Active WD: ${activeWD}/${FR_MONTH.weekdays} · Start: ${agmt.startTime||'–'} End: ${agmt.expireTime||'–'}`,
               billed:price,calcAmt:expectedPro,rowIdx:mr.i,
               decision:sev==='ok'||sev==='flag'&&expectedPro===null?null:null,
               note:sev==='error'?`Billed $${price}, expected $${expectedPro}`:'Agreement dates confirmed from Qnet DB',
@@ -1881,7 +1968,7 @@ function _doAnalyze(pStart,pEnd){
           } else {
             AUDIT.push({id:mkId(),type:'prorate',sev:'flag',fileKey:key,sheet:sName,custId:cId,sa:mr.sa,
               desc:'Monthly Pricing — pro-ration'+(DB.connected?' (no agreement dates in DB)':''),
-              calc:`Billed: $${price} (non-round) · Formula: (active WD ÷ ${totalWD()}) × monthly rate`,
+              calc:`Billed: $${price} (non-round) · Formula: (active WD ÷ ${FR_MONTH.weekdays} weekdays in ${FR_MONTH.label}) × monthly rate`,
               billed:price,calcAmt:null,rowIdx:mr.i,decision:null,
               note:DB.connected?'Agreement found but no start/end dates — verify in Qnet':'DB not connected — verify agreement dates in Qnet',
               fix:'',fixRow:[...mr.row],hdr});
@@ -1938,7 +2025,18 @@ function _doAnalyze(pStart,pEnd){
         // Contracted Units (Items A/B/C) handle shutdowns differently in Qnet — not checked here.
         // Rule: only FULL Mon–Fri week shutdowns generate a credit (20% of monthly rate per week).
         // If every week of the period is shut down, credit is 100% regardless of week count.
+        //
+        // Measured over FR_MONTH — the calendar month — NOT the pStart/pEnd
+        // cycle. The cycle opens on the Monday after the prior month's last
+        // Sunday, so its first week is prior-month time that the prior month's
+        // flat rate already carried; counting it here credited the same
+        // shutdown twice, on the wrong invoice.
         if(DB.connected && key==='D'){
+          // Note on data coverage: DB.shutdownRows is fetched for the cycle
+          // (07-27 → 08-30), whose tail is a day short of the month end
+          // (08-31). Nothing is lost — a shutdown starting 08-31 can't form a
+          // Mon–Fri week contained in August — but widen the webhook range if
+          // the containment rule ever changes.
           // Only check SAs that appear on flat rate (1005) or monthly pricing rows
           const saSet=new Set([...g.flatRows.map(r=>r.sa),...g.mpRows.map(r=>r.sa)]);
           saSet.forEach(sa=>{
@@ -1959,8 +2057,8 @@ function _doAnalyze(pStart,pEnd){
                 ||agmtList.sort((a,b)=>(b.startTime||'').localeCompare(a.startTime||''))[0];
             }
             if(!agmt)return;
-            const sds=getApplicableShutdowns(sa,pStart,pEnd,agmt.agreementNumber);
-            const fullWeeks=countFullShutdownWeeks(sds,pStart,pEnd);
+            const sds=getApplicableShutdowns(sa,FR_MONTH.start,FR_MONTH.end,agmt.agreementNumber);
+            const fullWeeks=countFullShutdownWeeks(sds,FR_MONTH.start,FR_MONTH.end);
             const creditRows=g.shutdownRows.filter(r=>r.sa===sa);
             const rate=parseFloat(agmt.rate)||0;
             const freq=agmt.flatRateFrequency||'Monthly';
@@ -1971,9 +2069,9 @@ function _doAnalyze(pStart,pEnd){
                 const billedCredit=creditRows.reduce((s,r)=>s+Math.abs(parseFloat(r.row[cP])||0),0);
                 AUDIT.push({id:mkId(),type:'shutdown-credit',sev:'flag',fileKey:key,sheet:sName,custId:cId,sa,
                   desc:'Shutdown credit present but no shutdown found in DB',
-                  calc:`Credit billed: $${billedCredit} — no matching shutdown in Qnet for this SA`,
+                  calc:`Credit billed: $${billedCredit} — no shutdown in Qnet for this SA during ${FR_MONTH.label}`,
                   billed:-billedCredit,calcAmt:null,rowIdx:creditRows[0].i,decision:null,
-                  note:'Verify in Qnet — shutdown may not have been logged, or credit may be incorrect.',
+                  note:`Flat Rate and Monthly Pricing bill the calendar month (${FR_MONTH.start} → ${FR_MONTH.end}). Verify in Qnet — the shutdown may not have been logged, may belong to another month, or the credit may be incorrect.`,
                   fix:'',fixRow:null,hdr});
               }
               return;
@@ -1987,9 +2085,9 @@ function _doAnalyze(pStart,pEnd){
                 const billedCredit=creditRows.reduce((s,r)=>s+Math.abs(parseFloat(r.row[cP])||0),0);
                 AUDIT.push({id:mkId(),type:'shutdown-credit',sev:'error',fileKey:key,sheet:sName,custId:cId,sa,
                   desc:'Shutdown credit billed but no full-week shutdown found',
-                  calc:`Shutdowns found: ${sdDesc} — none span full Mon–Fri week`,
+                  calc:`${FR_MONTH.label} · Shutdowns found: ${sdDesc} — none span a full Mon–Fri week inside the month`,
                   billed:-billedCredit,calcAmt:0,rowIdx:creditRows[0].i,decision:null,
-                  note:'Per billing rules, only full Mon–Fri week shutdowns generate a credit. Partial weeks = no credit.',
+                  note:`Per billing rules, only full Mon–Fri week shutdowns generate a credit, and the week must fall inside the billed calendar month (${FR_MONTH.start} → ${FR_MONTH.end}). Partial weeks = no credit.`,
                   fix:`Remove shutdown credit row (PRICE should be 0)`,fixRow:[...creditRows[0].row],hdr});
               }
               // No full weeks and no credit row = correct, nothing to flag
@@ -1999,7 +2097,7 @@ function _doAnalyze(pStart,pEnd){
             // Full week shutdowns exist — calculate expected credit
             // Rule: if every week of billing period is shut down → 100% credit
             const totalPeriodWeeks=countFullShutdownWeeks(
-              [{startTime:pStart,endTime:pEnd}],pStart,pEnd
+              [{startTime:FR_MONTH.start,endTime:FR_MONTH.end}],FR_MONTH.start,FR_MONTH.end
             );
             const allWeeksShutdown=totalPeriodWeeks>0&&fullWeeks>=totalPeriodWeeks;
             const expectedCredit=allWeeksShutdown?rate:calcFlatRateCredit(rate,freq,fullWeeks);
@@ -2007,8 +2105,8 @@ function _doAnalyze(pStart,pEnd){
 
             if(creditRows.length===0){
               AUDIT.push({id:mkId(),type:'shutdown-credit',sev:'error',fileKey:key,sheet:sName,custId:cId,sa,
-                desc:`Shutdown credit MISSING — ${fullWeeks} full week${fullWeeks>1?'s':''}${allWeeksShutdown?' (full period — 100% credit)':''}`,
-                calc:`${fullWeeks} full wk${fullWeeks>1?'s':''} × 20% of $${rate} = $${expectedCredit}`,
+                desc:`Shutdown credit MISSING — ${fullWeeks} full week${fullWeeks>1?'s':''} in ${FR_MONTH.label}${allWeeksShutdown?' (full month — 100% credit)':''}`,
+                calc:`${FR_MONTH.label} · ${allWeeksShutdown?`full month shutdown → 100%`:`${fullWeeks} full wk${fullWeeks>1?'s':''} × 20%`} of $${rate} = $${expectedCredit}`,
                 billed:0,calcAmt:-expectedCredit,
                 rowIdx:g.flatRows.find(r=>r.sa===sa)?.i??g.mpRows.find(r=>r.sa===sa)?.i??0,
                 decision:null,
@@ -2017,8 +2115,8 @@ function _doAnalyze(pStart,pEnd){
             } else {
               const sev=!withinTol(billedCredit,expectedCredit)?'error':'ok';
               AUDIT.push({id:mkId(),type:'shutdown-credit',sev,fileKey:key,sheet:sName,custId:cId,sa,
-                desc:`Shutdown credit — ${fullWeeks} full week${fullWeeks>1?'s':''}${allWeeksShutdown?' (100% — full period)':''} — DB verified`,
-                calc:`${allWeeksShutdown?'Full period shutdown → 100% credit':'${fullWeeks} wks × 20%'} of $${rate} = $${expectedCredit}`,
+                desc:`Shutdown credit — ${fullWeeks} full week${fullWeeks>1?'s':''} in ${FR_MONTH.label}${allWeeksShutdown?' (100% — full month)':''} — DB verified`,
+                calc:`${FR_MONTH.label} · ${allWeeksShutdown?`full month shutdown → 100%`:`${fullWeeks} full wk${fullWeeks>1?'s':''} × 20%`} of $${rate} = $${expectedCredit}`,
                 billed:-billedCredit,calcAmt:-expectedCredit,rowIdx:creditRows[0].i,
                 decision:sev==='ok'?'accept':null,
                 note:sev==='error'?`Billed $${billedCredit}, expected $${expectedCredit}`:`Shutdowns: ${sdDesc}`,
@@ -2093,21 +2191,23 @@ function _doAnalyze(pStart,pEnd){
   // Also flags mid-period agreements with no matching invoice row (sev: 'flag' —
   // some agreements legitimately don't bill, so flag-for-review is the right verdict).
   if(DB.connected){
-    const ps=new Date(pStart),pe=new Date(pEnd);
-    const insidePeriod=(d)=>{if(!d)return false;const x=new Date(d);return x>=ps&&x<=pe;};
-    const isMidPeriod=(a)=>{
-      const s=a.startTime?new Date(a.startTime):null;
-      const e=a.expireTime?new Date(a.expireTime):null;
-      const startMid=s&&s>ps&&s<=pe;
-      const endMid=e&&e>=ps&&e<pe;
+    // Contracted units run on the cycle; priced agreements (Item D) run on the
+    // calendar month, so "mid-period" means a different span for each.
+    const ps=cd(pStart),pe=cd(pEnd);
+    const mps=cd(FR_MONTH.start),mpe=cd(FR_MONTH.end);
+    const isMidPeriod=(a,s0,e0)=>{
+      const s=a.startTime?cd(a.startTime):null;
+      const e=a.expireTime?cd(a.expireTime):null;
+      const startMid=s&&s>s0&&s<=e0;
+      const endMid=e&&e>=s0&&e<e0;
       return startMid||endMid;
     };
-    const boundaryLabel=(a)=>{
-      const s=a.startTime?new Date(a.startTime):null;
-      const e=a.expireTime?new Date(a.expireTime):null;
+    const boundaryLabel=(a,s0,e0)=>{
+      const s=a.startTime?cd(a.startTime):null;
+      const e=a.expireTime?cd(a.expireTime):null;
       const parts=[];
-      if(s&&s>ps&&s<=pe)parts.push(`starts ${a.startTime}`);
-      if(e&&e>=ps&&e<pe)parts.push(`ends ${a.expireTime}`);
+      if(s&&s>s0&&s<=e0)parts.push(`starts ${a.startTime}`);
+      if(e&&e>=s0&&e<e0)parts.push(`ends ${a.expireTime}`);
       return parts.join(' · ');
     };
     const matchByRate=(rows,rate,siblingCount)=>{
@@ -2120,27 +2220,27 @@ function _doAnalyze(pStart,pEnd){
     Object.values(DB.flatRateMap).forEach(agmts=>{
       agmts.forEach(agmt=>{
         const sa=agmt.sageLocationCode;
-        if(!sa||!isMidPeriod(agmt))return;
+        if(!sa||!isMidPeriod(agmt,mps,mpe))return;
         if(DB.marelliFlatZeroSAs.has(sa))return;
         const cust=agmt.accountNumber||'(unknown)';
         const rate=parseFloat(agmt.rate)||0;
         const freq=agmt.flatRateFrequency||'';
-        const aStart=agmt.startTime?new Date(agmt.startTime):ps;
-        const aEnd=agmt.expireTime?new Date(agmt.expireTime):pe;
-        const activeStart=new Date(Math.max(aStart,ps));
-        const activeEnd=new Date(Math.min(aEnd,pe));
+        const aStart=agmt.startTime?cd(agmt.startTime):mps;
+        const aEnd=agmt.expireTime?cd(agmt.expireTime):mpe;
+        const activeStart=new Date(Math.max(aStart,mps));
+        const activeEnd=new Date(Math.min(aEnd,mpe));
         const activeWD=countWeekdays(activeStart,activeEnd);
-        const periodDesc=`${activeStart.toISOString().slice(0,10)}→${activeEnd.toISOString().slice(0,10)}`;
+        const periodDesc=`${cdISO(activeStart)}→${cdISO(activeEnd)}`;
 
         // Math is well-defined for monthly billing (MP, FR-Monthly, FR with no freq).
         // For Annual/Quarterly etc. the row already reflects a fraction of the
         // agreement rate — flag for manual verification.
         let expected=null,expectedDesc;
         if(!freq||freq==='Monthly'){
-          expected=rate>0?r2((activeWD/totalWD())*rate):null;
-          expectedDesc=`(${activeWD}/${totalWD()} active WD) × $${rate} = $${expected}`;
+          expected=rate>0?r2((activeWD/FR_MONTH.weekdays)*rate):null;
+          expectedDesc=`(${activeWD}/${FR_MONTH.weekdays} active WD in ${FR_MONTH.label}) × $${rate} = $${expected}`;
         } else {
-          expectedDesc=`Frequency: ${freq} · Rate: $${rate} · ${activeWD}/${totalWD()} active WD — verify manually`;
+          expectedDesc=`Frequency: ${freq} · Rate: $${rate} · ${activeWD}/${FR_MONTH.weekdays} active WD in ${FR_MONTH.label} — verify manually`;
         }
 
         const candidates=mpFrInvoiceBySA[sa]||[];
@@ -2151,7 +2251,7 @@ function _doAnalyze(pStart,pEnd){
           AUDIT.push({
             id:mkId(),type:'agreement-coverage',sev:'flag',fileKey:'D',
             sheet:'(no row)',custId:cust,sa,
-            desc:`Mid-period priced agreement — no matching Item D row (${boundaryLabel(agmt)})`,
+            desc:`Mid-period priced agreement — no matching Item D row (${boundaryLabel(agmt,mps,mpe)})`,
             calc:`Agreement ${agmt.agreementNumber} · ${agmt.priceType||freq||'Priced'} · Active ${periodDesc} · ${expectedDesc}`,
             billed:0,calcAmt:expected,rowIdx:0,decision:null,
             note:'Agreement is active mid-period in Qnet but no matching Item D row found. May be legitimately unbilled (zero-quantity, suppressed) — verify in Qnet.',
@@ -2166,7 +2266,7 @@ function _doAnalyze(pStart,pEnd){
           AUDIT.push({
             id:mkId(),type:'agreement-coverage',sev:'flag',
             fileKey:head.key,sheet:head.sName,custId:cust,sa,
-            desc:`Mid-period priced agreement — manual verification needed (${boundaryLabel(agmt)})`,
+            desc:`Mid-period priced agreement — manual verification needed (${boundaryLabel(agmt,mps,mpe)})`,
             calc:`Agreement ${agmt.agreementNumber} · Active ${periodDesc} · ${expectedDesc}`,
             billed:billedTotal,calcAmt:null,rowIdx:head.i,decision:null,
             note:'Frequency requires manual rate verification — confirm against the Qnet billing schedule.',
@@ -2178,7 +2278,7 @@ function _doAnalyze(pStart,pEnd){
           AUDIT.push({
             id:mkId(),type:'agreement-coverage',sev,
             fileKey:head.key,sheet:head.sName,custId:cust,sa,
-            desc:`Mid-period priced agreement — pro-ration ${sev==='ok'?'verified':'mismatch'} (${boundaryLabel(agmt)})`,
+            desc:`Mid-period priced agreement — pro-ration ${sev==='ok'?'verified':'mismatch'} (${boundaryLabel(agmt,mps,mpe)})`,
             calc:`Agreement ${agmt.agreementNumber} · ${freq||'Monthly'} · Active ${periodDesc} · ${expectedDesc}`,
             billed:billedTotal,calcAmt:expected,rowIdx:head.i,
             decision:sev==='ok'?'accept':null,
@@ -2194,7 +2294,7 @@ function _doAnalyze(pStart,pEnd){
     Object.values(DB.contractedMap).forEach(agmts=>{
       agmts.forEach(agmt=>{
         const sa=agmt.sageLocationCode;
-        if(!sa||!isMidPeriod(agmt))return;
+        if(!sa||!isMidPeriod(agmt,ps,pe))return;
         if(DB.marelliFlatZeroSAs.has(sa))return;
         const cust=agmt.accountNumber||'(unknown)';
         const rate=parseFloat(agmt.rate)||0;
@@ -2239,7 +2339,7 @@ function _doAnalyze(pStart,pEnd){
           AUDIT.push({
             id:mkId(),type:'agreement-coverage',sev:'flag',fileKey:'A',
             sheet:'(no row)',custId:cust,sa,
-            desc:`Mid-period CU agreement — no matching 1001 row (${boundaryLabel(agmt)})`,
+            desc:`Mid-period CU agreement — no matching 1001 row (${boundaryLabel(agmt,ps,pe)})`,
             calc:`${calcCore} · Expected total: $${expected}`,
             billed:0,calcAmt:expected,rowIdx:0,decision:null,
             note:'Contracted Units agreement is active mid-period in Qnet but no matching 1001 row found in Items A/B/C. May be legitimately unbilled — verify in Qnet.',
@@ -2254,7 +2354,7 @@ function _doAnalyze(pStart,pEnd){
         AUDIT.push({
           id:mkId(),type:'agreement-coverage',sev,
           fileKey:head.key,sheet:head.sName,custId:cust,sa,
-          desc:`Mid-period CU agreement — partial-week ${sev==='ok'?'verified':'mismatch'} (${boundaryLabel(agmt)})`,
+          desc:`Mid-period CU agreement — partial-week ${sev==='ok'?'verified':'mismatch'} (${boundaryLabel(agmt,ps,pe)})`,
           calc:`${calcCore} · Expected total: $${expected} across ${myRows.length} 1001 row${myRows.length!==1?'s':''}`,
           billed:billedTotal,calcAmt:expected,rowIdx:head.i,
           decision:sev==='ok'?'accept':null,
@@ -2429,11 +2529,11 @@ function renderAuditDecisions(items){
   const errors=items.filter(a=>a.sev==='error');
   const flags=items.filter(a=>a.sev==='flag');
   const typeInfo={
-    'shutdown-credit':{l:'Shutdown Credits',i:'🏭',d:'DB-verified: checks whether shutdown credit rows in the export match active shutdowns found in the Qnet database. Full-location shutdowns apply to all SAs at that plant. Agreement-specific shutdowns are scoped to matching SAs only. For Flat Rate agreements, calculates the expected credit amount by frequency (Monthly=20%, Quarterly=1/13, Annual=1/52 of the flat rate).'},
+    'shutdown-credit':{l:'Shutdown Credits',i:'🏭',d:'DB-verified: checks whether shutdown credit rows in the export match active shutdowns found in the Qnet database. Full-location shutdowns apply to all SAs at that plant. Agreement-specific shutdowns are scoped to matching SAs only. For Flat Rate agreements, calculates the expected credit amount by frequency (Monthly=20%, Quarterly=1/13, Annual=1/52 of the flat rate). Measured over the <b>calendar month</b> being billed — Monthly Pricing and Flat Rate cover the 1st through the last day of the month, not the Mon–Sun billing cycle that contracted units use, so a shutdown week in the cycle\'s opening days belongs to the prior month\'s invoice.'},
     'vol-disc':{l:'Volume Discounts',i:'📊',d:'Confirms the discount % applied in each 1096 row matches its ITEMDESC statement. Source of truth is the stated % in the description.'},
     'hst':{l:'HST Tax (13%)',i:'🧾',d:'Verifies HST rows (1053) for Canadian agreements. Tax base = net billable amount for that invoice group.'},
     'vat':{l:'VAT Tax (16%)',i:'🧾',d:'Verifies VAT rows (1047) for E200 Mexico agreements. Tax base = net billable amount × 16%.'},
-    'prorate':{l:'Monthly Pricing Pro-ration',i:'📅',d:'DB-verified where agreement start/end dates exist in Qnet. Calculates (active weekdays ÷ total period weekdays) × monthly rate. If DB has no dates, flags for manual check.'},
+    'prorate':{l:'Monthly Pricing Pro-ration',i:'📅',d:'DB-verified where agreement start/end dates exist in Qnet. Calculates (active weekdays ÷ weekdays in the billed calendar month) × monthly rate. If DB has no dates, flags for manual check.'},
     'wp':{l:'Weekend Production',i:'🗓',d:'Verifies WP rows (1003). Informational — amounts set by agreement in Qnet.'},
     'missing-cust':{l:'Missing Customer Codes',i:'🚨',d:'Invoices with no CUSTOMER_ID — will fail or mispost in Sage.'},
     'missing-sa':{l:'Missing Agreement Codes',i:'🚨',d:'Billing rows with no SA code — Sage requires this to post correctly.'},
@@ -3093,7 +3193,7 @@ function onReconNewStartChange(){
     if(peEl&&!peEl.value)peEl.value=isoLocal(priorEnd);
     // Total weekdays in prior period
     const wdEl=document.getElementById('rPriorWD');
-    if(wdEl&&!wdEl.value)wdEl.value=countWeekdays(priorStart,priorEnd);
+    if(wdEl&&!wdEl.value)wdEl.value=countWeekdays(isoLocal(priorStart),isoLocal(priorEnd));
     // Invoice/GL date defaults: 1st of new month for GL, first weekday of new month for invoice
     const glEl=document.getElementById('rNewGL');
     if(glEl&&!glEl.value)glEl.value=isoLocal(d);
@@ -3603,12 +3703,18 @@ function reconSetStep(n){
 // type ∈ 'contracted-units' | 'monthly-pricing' | 'flat-rate' | 'shutdown-credit'
 function buildExpectedSnapshot(pStart,pEnd){
   const out={};
+  // Contracted units use pStart–pEnd as given; Monthly Pricing and Flat Rate
+  // bill the calendar month. The recon flow already defaults its prior period
+  // to a calendar month, so this is usually the same span — but it stays
+  // correct if someone overrides those dates with a cycle range.
+  const frMonth=flatRateBillingMonth(pStart,pEnd);
   const push=(cust,sa,type,data)=>{
     out[cust]=out[cust]||{};
     out[cust][sa]=out[cust][sa]||{};
     out[cust][sa][type]=data;
   };
   const periodWD=countWeekdays(pStart,pEnd);
+  const frPeriodWD=frMonth?frMonth.weekdays:periodWD;
 
   // Contracted Units (1001) — per-week math
   Object.entries(DB_PRIOR.contractedMap||{}).forEach(([sa,agmts])=>{
@@ -3665,40 +3771,42 @@ function buildExpectedSnapshot(pStart,pEnd){
       if(rate<=0)return;
       const freq=agmt.flatRateFrequency||'';
       const isMonthlyBill=!freq||freq==='Monthly';
-      const aStart=agmt.startTime?new Date(agmt.startTime):new Date(pStart);
-      const aEnd=agmt.expireTime?new Date(agmt.expireTime):new Date(pEnd);
-      const activeStart=new Date(Math.max(aStart,new Date(pStart)));
-      const activeEnd=new Date(Math.min(aEnd,new Date(pEnd)));
+      const frStart=cd(frMonth?frMonth.start:pStart),frEnd=cd(frMonth?frMonth.end:pEnd);
+      const aStart=agmt.startTime?cd(agmt.startTime):frStart;
+      const aEnd=agmt.expireTime?cd(agmt.expireTime):frEnd;
+      const activeStart=new Date(Math.max(aStart,frStart));
+      const activeEnd=new Date(Math.min(aEnd,frEnd));
       if(activeStart>activeEnd)return;
       const activeWD=countWeekdays(activeStart,activeEnd);
 
       const isMP=(agmt.priceType||'').toLowerCase().includes('monthly');
-      const baseAmt=isMonthlyBill?r2((activeWD/periodWD)*rate):null;
+      const baseAmt=isMonthlyBill?r2((activeWD/frPeriodWD)*rate):null;
       const type=isMP?'monthly-pricing':'flat-rate';
       if(baseAmt!==null){
         push(cust,sa,type,{
           amount:baseAmt,agreement:agmt,agreementNumber:String(agmt.agreementNumber||''),
           itemId:'1005',
-          calc:`${isMP?'Monthly Pricing':'Flat Rate'} · ${activeWD}/${periodWD} active WD × $${rate} = $${baseAmt}`
+          calc:`${isMP?'Monthly Pricing':'Flat Rate'} · ${activeWD}/${frPeriodWD} active WD in ${frMonth?frMonth.label:'period'} × $${rate} = $${baseAmt}`
         });
       } else {
         push(cust,sa,type,{
           amount:null,agreement:agmt,agreementNumber:String(agmt.agreementNumber||''),
           itemId:'1005',
-          calc:`Flat Rate · freq=${freq} · ${activeWD}/${periodWD} active WD · rate=$${rate} (manual verification)`
+          calc:`Flat Rate · freq=${freq} · ${activeWD}/${frPeriodWD} active WD in ${frMonth?frMonth.label:'period'} · rate=$${rate} (manual verification)`
         });
       }
 
-      // Shutdown credit
-      const sds=getApplicableShutdowns(sa,pStart,pEnd,agmt.agreementNumber,DB_PRIOR);
-      const fullWeeks=countFullShutdownWeeks(sds,pStart,pEnd);
-      const totalPeriodWeeks=countFullShutdownWeeks([{startTime:pStart,endTime:pEnd}],pStart,pEnd);
+      // Shutdown credit — measured over the calendar month, like the base.
+      const frS=frMonth?frMonth.start:pStart,frE=frMonth?frMonth.end:pEnd;
+      const sds=getApplicableShutdowns(sa,frS,frE,agmt.agreementNumber,DB_PRIOR);
+      const fullWeeks=countFullShutdownWeeks(sds,frS,frE);
+      const totalPeriodWeeks=countFullShutdownWeeks([{startTime:frS,endTime:frE}],frS,frE);
       const allShutdown=totalPeriodWeeks>0&&fullWeeks>=totalPeriodWeeks;
       const credit=allShutdown?-rate:(fullWeeks>0?-calcFlatRateCredit(rate,freq||'Monthly',fullWeeks):0);
       push(cust,sa,'shutdown-credit',{
         amount:r2(credit),agreement:agmt,agreementNumber:String(agmt.agreementNumber||''),
         itemId:'1005',
-        calc:fullWeeks>0?`${fullWeeks} full wk shutdown${fullWeeks>1?'s':''}${allShutdown?' (100% — full period)':''} · credit = $${r2(credit)}`:'No full-week shutdowns in prior period'
+        calc:fullWeeks>0?`${fullWeeks} full wk shutdown${fullWeeks>1?'s':''} in ${frMonth?frMonth.label:'the prior period'}${allShutdown?' (100% — full month)':''} · credit = $${r2(credit)}`:`No full-week shutdowns in ${frMonth?frMonth.label:'the prior period'}`
       });
     });
   });

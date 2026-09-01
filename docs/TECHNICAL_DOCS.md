@@ -35,6 +35,56 @@ The TQS Month-End Billing Processor is an internal web application that automate
 - **Auth:** Microsoft Entra ID (OIDC authorization code flow).
 - **Data sources:** n8n webhooks (front the Qnet DB and Confluence), SharePoint via Graph API.
 
+### 2a. Two billing periods, not one
+
+The app carries **two different period windows**, and mixing them up is a real
+source of wrong invoices:
+
+| Window | Applies to | Span | Where it comes from |
+|---|---|---|---|
+| **TQS billing calendar cycle** | Items A/B/C — contracted units, additional hours, weekend production | Monday after the prior month's last Sunday → this month's last Sunday. August 2026 = `2026-07-27` → `2026-08-30` | The **Period Start / Period End** fields in Step 1, prefilled by `computeBillingCycle()` |
+| **Calendar month** | Item D — Monthly Pricing and Flat Rate | 1st → last day of the month. August 2026 = `2026-08-01` → `2026-08-31` | `flatRateBillingMonth(pStart, pEnd)` — the calendar month containing the period **end** |
+
+Confluence, *Automated Representation Billing Processes by Agreement Price
+Type* (Finance & Accounting Playbook):
+
+> Monthly and flat rate billing reports cover the full calendar month, from the
+> 1st through the last day of the month. Other billing/report types either use a
+> single week or follow the TQS billing calendar.
+
+The cycle's opening week is **prior-month time**, so anything Item D that
+measures against the cycle double-counts it. That was the v2.8.8 bug: a
+shutdown running Mon `2026-07-27` – Sun `2026-08-02` sits inside the August
+cycle, so the audit demanded an August flat-rate shutdown credit for a week
+July's invoice had already covered. Every Item D check — shutdown credits, the
+100%-full-month rule, and pro-ration — now reads `FR_MONTH` / `flatRateBillingMonth()`.
+The `Total Weekdays in Period` field likewise counts the **cycle's** weekdays
+(25 in August 2026) and is the wrong denominator for Item D, which uses the
+month's (21).
+
+### 2b. Dates are calendar days, not instants
+
+`new Date('2026-08-31')` parses as **UTC midnight**, so reading it back with the
+local getters (`getDay`, `getDate`, `getMonth`) reports the previous day
+anywhere west of Greenwich — in America/New_York `new Date('2026-08-01').getDay()`
+is Friday, not Saturday. That shifted every week boundary by a day: a shutdown
+week whose Friday was the month's last day was dropped, and one whose Monday
+was the day before the period start was counted.
+
+Billing date math therefore goes through the `cd()` / `cdDay()` / `cdAdd()` /
+`cdISO()` primitives, which read and write UTC fields so a calendar date means
+the same day in every browser. `countFullShutdownWeeks`, `countWeekdays`,
+`forEachMonFriWeek`, `getApplicableShutdowns` and `flatRateBillingMonth` all use
+them. **Do not** reintroduce `new Date(isoString).getDay()` /
+`.setDate()` for billing math.
+
+Still on the old local-date pattern, and deliberately left alone so
+contracted-unit amounts do not move without Finance verifying them: the
+contracted-units partial-week walks in the `agreement-coverage` check and in
+`buildExpectedSnapshot`, the `contracted-shutdown` (Normal setting) week check,
+and the reconciliation retro week math. Same one-day skew, contracted-units
+only — see `docs/PROJECT_LOG.md` "Open items".
+
 ---
 
 ## 3. Authentication Flow
@@ -149,11 +199,23 @@ Target location: `Accounting/AR/Invoicing/Mthly Invoicing Docs/<year>/<month>/Mo
 ```
 /
 ├── server.js             Express server + Entra SSO (msal-node)
-├── package.json          Node deps and start script
+├── package.json          Node deps, start script, and `npm test`
 ├── public/
 │   └── index.html        Entire frontend (single file, no build step)
+├── scripts/
+│   ├── extract-fns.mjs           Pulls named functions out of index.html so
+│   │                             tests exercise the SHIPPED code, not a copy
+│   └── test-flat-rate-period.mjs Item D billing-period regression suite
 └── docs/
     └── TECHNICAL_DOCS.md This document
+```
+
+Run the suite with `npm test`. It has no dependencies and runs in CI via
+`npm run test --if-present`. Because the billing math is timezone-sensitive,
+run it under a few zones before shipping a date change:
+
+```
+for tz in America/New_York UTC Europe/Berlin Australia/Sydney; do TZ=$tz npm test; done
 ```
 
 ---

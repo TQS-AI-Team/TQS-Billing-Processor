@@ -5,7 +5,8 @@
     "express": "^4.18.2"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node scripts/test-flat-rate-period.mjs"
   },
   "engines": {
     "node": ">=18"

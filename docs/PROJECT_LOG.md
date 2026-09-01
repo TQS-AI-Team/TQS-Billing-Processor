@@ -132,6 +132,24 @@ Standalone double-click HTML file — no server, no build tools.
 
 ### Bug-watch / things to verify after each Lucas run
 
+- **Item D shutdown credits after v2.8.8** — verify on the next month-end run
+  that the credits the audit now expects match what AR actually billed. Any
+  credit for a week in the cycle's opening days (the prior month's tail) should
+  have disappeared, and the same credit should appear on the PRIOR month's run.
+  If Finance has already invoiced a month using the old cycle-scoped math, that
+  month's credits are on the wrong invoice and need a retro.
+- **Open question for Finance (raised 2026-09-01, unanswered):** a Mon–Fri
+  shutdown week that straddles a month boundary — e.g. Mon `2026-08-31` –
+  Fri `2026-09-04` — is fully contained in neither month, so under the
+  containment rule it credits in **neither**. The Confluence rules page does not
+  cover this. Behavior is unchanged from before v2.8.8; flagged, not decided.
+- **Contracted-units week math still uses local-date getters** — the same
+  one-day skew v2.8.8 fixed for Item D is still present in the CU partial-week
+  walks (`agreement-coverage` CU branch, `buildExpectedSnapshot` CU branch), the
+  `contracted-shutdown` Normal-setting week check, and the reconciliation retro
+  week math. Left alone deliberately: fixing it moves contracted-unit dollar
+  amounts, and nobody has verified the corrected figures against real invoices.
+  Worth doing with Finance watching the diff, using the `cd()` primitives.
 - **MEMO column on retro rows** (fixed v1.7.6 with case-insensitive lookup — verify on next run)
 - **Auto-Matched count** — should be a healthy number (a few hundred). If suspiciously low while billed cells are high, DB_PRIOR didn't load enough data.
 - **n8n Query 5 priceType filter** — confirmed `OR a.priceType IS NULL` was added by Lucas on 2026-04-30. If new "Reference RXXX found in MEMO but not in DB_PRIOR" diagnostics appear with NEWER agreement numbers, may need to check the filter again or look at expireTime cutoffs.
@@ -142,6 +160,8 @@ Standalone double-click HTML file — no server, no build tools.
 
 | Decision | When | Why |
 |---|---|---|
+| Item D (Monthly Pricing + Flat Rate) measures against the **calendar month**, not the `pStart`/`pEnd` cycle | v2.8.8 | Confluence *Automated Representation Billing Processes by Agreement Price Type*: "Monthly and flat rate billing reports cover the full calendar month, from the 1st through the last day of the month." The cycle opens in the prior month, so cycle-scoped Item D checks credited a shutdown week to the wrong invoice. `flatRateBillingMonth()` is the one place that window is derived. |
+| Billing date math runs on UTC-normalized calendar days (`cd`/`cdDay`/`cdAdd`/`cdISO`) | v2.8.8 | `new Date('2026-08-01')` is UTC midnight; reading it with local getters reports the previous day west of Greenwich, shifting every week boundary by a day in the timezone the team actually runs this in. |
 | Calendar-month rule for `computeBillingCycle()` (cycle = current calendar month's last Sunday, regardless of whether today > last Sunday) | v1.4.0 | Spec rule text contradicted spec verify example. Verify example matched team's actual workflow (accountants finish cycle in days after Sunday but before next month begins). Implemented to match the example. |
 | Squash-merge for all PRs | ongoing | Clean per-feature commit on main; simple `git revert <sha>` for any rollback. Documented in `docs/ROLLBACK.md`. |
 | Pre-bill customers = customers in prior pre-bill file (not from DB) | v1.7.1 | Spec section 3.1 explicit. Iterating union of billed + expected generated phantom retros for every priced agreement. |
